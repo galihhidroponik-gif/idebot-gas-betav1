@@ -61,7 +61,7 @@ var globalAI = {
     globalAI.geminiModel      = settingMatrix[17] ? (settingMatrix[17][6] || "") : ""; // G18
     globalAI.promptWarmerName = settingMatrix[19] ? (settingMatrix[19][5] || "") : ""; // F20
     globalAI.maxOutputTokens  = settingMatrix[15] ? (settingMatrix[15][4] || 4096) : 4096; // Pindah ke E16
-    globalAI.fallbackModels   = settingMatrix[18] ? (settingMatrix[18][7] || "") : ""; // Pindah ke H19
+    globalAI.fallbackModels   = settingMatrix[17] ? (settingMatrix[17][7] || "") : ""; // [REVISI] Menunjuk presisi ke H18
     
     // Mapping Global History
     globalAI.idtglUpdatemodel = settingMatrix[15] ? safeTrim(settingMatrix[15][7]) : ""; // H16

@@ -623,8 +623,6 @@ function processWebhook(data, clientSheetId) { // <-- Tambah Parameter
       updateKolomY = true; 
 
      // EKSEKUSI LOG KHUSUS: Kirim 1x saja hasil tumpukan array ke Google Sheet LOG
-
-     // EKSEKUSI LOG KHUSUS: Kirim 1x saja hasil tumpukan array ke Google Sheet LOG
       // ===================================================================================
       // Mengirimkan data tambahan: Agen (finalColD), Akun (namaAkun), dan Nama Konsumen (finalH)
       logImageActivity(uniqueIdB, imagePipelineLogs.join("\n"), driveLink, aiExtractedData, finalColD, namaAkun, finalH, clientSheetId);
@@ -1187,10 +1185,10 @@ function uploadImageToDrive(imageBlob, fileName, folderId, clientSheetId) { // <
     file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
     
     return file.getUrl();
+  // Weebhook.gs — perbaiki jumlah & urutan argumen agar clientSheetId sampai ke posisi ke-8
   } catch (e) { 
-    // Sisipkan string kosong "" untuk parameter driveLink agar urutannya pas
-    logImageActivity("Drive Upload Exception", e.message, "", clientSheetId); 
-    return "ERROR_UPLOAD"; 
+  logImageActivity("Drive Upload Exception", e.message, "", "", "", "", "", clientSheetId); 
+  return "ERROR_UPLOAD"; 
   }
 }
 

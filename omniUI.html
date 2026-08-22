@@ -1,0 +1,2465 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Omnichannel Chat Viewer - Mobile Optimized (GAS Native)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #f0f2f5; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; overflow: hidden; }
+        .main-layout { display: flex; height: 100vh; width: 100vw; overflow: hidden; position: relative; }
+        
+        .sidebar { 
+            width: 380px; 
+            border-right: 1px solid #e9edef; 
+            background: white; 
+            display: flex; 
+            flex-direction: column; 
+            z-index: 20;
+            transition: all 0.3s ease;
+        }
+        
+        .chat-area { 
+            flex: 1; 
+            display: flex; 
+            flex-direction: column; 
+            background: #efeae2; 
+            position: relative; 
+            z-index: 10;
+        }
+
+        @media (max-width: 768px) {
+            .sidebar { width: 100%; position: absolute; inset: 0; }
+            .chat-area { width: 100%; position: absolute; inset: 0; transform: translateX(100%); transition: transform 0.3s ease; }
+            .chat-area.active { transform: translateX(0); z-index: 30; }
+        }
+        
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-thumb { background: #ced0d1; border-radius: 10px; }
+
+        .contact-item { transition: all 0.2s; cursor: pointer; border-bottom: 1px solid #f5f6f6; }
+        .contact-item:active { background-color: #ebebeb; }
+
+        .message-bubble { 
+            max-width: 85%; 
+            padding: 8px 12px; 
+            margin-bottom: 4px; 
+            position: relative; 
+            font-size: 14px; 
+            line-height: 1.4; 
+            box-shadow: 0 1px 0.5px rgba(0,0,0,0.1); 
+            word-wrap: break-word;
+        }
+        .bubble-user { align-self: flex-start; background: white; border-radius: 0 10px 10px 10px; }
+        .bubble-admin { align-self: flex-end; background: #d9fdd3; border-radius: 10px 0 10px 10px; }
+        
+        .msg-meta { font-size: 10px; color: #667781; display: flex; justify-content: space-between; gap: 10px; margin-bottom: 2px; }
+        .msg-sender { font-weight: bold; font-size: 11px; }
+        .sender-user { color: #128c7e; }
+        .sender-admin { color: #34b7f1; }
+
+        /* Media Link & Image Styling */
+        .chat-link { color: #027eb5; text-decoration: underline; cursor: pointer; display: inline-block; word-break: break-all; }
+        .chat-link:hover { color: #015f8a; }
+        
+        /* Modifikasi Layout Gambar (Auto header / menyesuaikan) */
+        .chat-image-container { position: relative; margin-top: 8px; margin-bottom: 6px; border-radius: 8px; overflow: hidden; background: #e9edef; border: 1px solid rgba(0,0,0,0.1); width: 100%; max-width: 320px; }
+        .chat-image { width: 100%; max-height: 250px; display: block; object-fit: cover; cursor: zoom-in; transition: transform 0.2s; }
+        .chat-image:hover { transform: scale(1.02); }
+        
+        /* Button Link Gambar di Header */
+        .header-link-btn { display: flex; align-items: center; justify-content: center; color: #888; padding: 2px 5px; border-radius: 4px; transition: 0.2s; text-decoration: none; }
+        .header-link-btn:hover { background: rgba(0,0,0,0.05); color: #008069; }
+
+        /* Copy Button */
+        .copy-btn { margin-left: auto; background: none; border: none; cursor: pointer; color: #888; padding: 2px 5px; border-radius: 4px; transition: 0.2s; display: flex; align-items: center; justify-content: center; }
+        .copy-btn:hover { background: rgba(0,0,0,0.05); color: #333; }
+        .copy-icon { width: 14px; height: 14px; }
+
+        /* Lightbox Modal untuk Klik Perbesar Gambar */
+        #image-modal { display: none; position: fixed; z-index: 9999; left: 0; top: 0; width: 100vw; height: 100vh; background-color: rgba(0,0,0,0.85); backdrop-filter: blur(4px); }
+        #image-modal-content { margin: auto; display: block; max-width: 95%; max-height: 90vh; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); border-radius: 8px; object-fit: contain; }
+        .close-modal { position: absolute; top: 15px; right: 25px; color: #f1f1f1; font-size: 35px; font-weight: bold; cursor: pointer; z-index: 10000; }
+        .close-modal:hover { color: #bbb; }
+
+        .badge-wa { background-color: #e9edef; color: #667781; padding: 1px 5px; border-radius: 3px; font-size: 9px; font-weight: 600; }
+        .badge-unsub-ai { background-color: #fee2e2; color: #ef4444; padding: 1px 5px; border-radius: 3px; font-size: 9px; font-weight: 800; border: 1px solid #fecaca; }
+        
+        .input-wrapper { background: #f0f2f5; border-top: 1px solid #e9edef; padding-bottom: env(safe-area-inset-bottom); }
+        .emoji-panel { display: flex; gap: 6px; padding: 8px 12px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+        .emoji-btn { font-size: 16px; padding: 4px 10px; background: white; border-radius: 15px; border: 1px solid #e9edef; flex-shrink: 0; }
+        
+        .input-area { padding: 8px 12px; display: flex; align-items: flex-end; gap: 8px; }
+        .message-input { flex: 1; background: white; border-radius: 15px; padding: 10px 15px; font-size: 15px; outline: none; border: 1px solid #fff; min-height: 40px; max-height: 120px; resize: none; overflow-y: auto; }
+        
+        .spinner { width: 24px; height: 24px; border: 2px solid #f3f3f3; border-top: 2px solid #00a884; border-radius: 50%; animation: spin 1s linear infinite; }
+        .spinner-small { width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.3); border-top: 2px solid white; border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        .switch { position: relative; display: inline-block; width: 32px; height: 18px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 18px; }
+        .slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 2px; bottom: 2px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: #ef4444; }
+        input:checked + .slider:before { transform: translateX(14px); }
+        .switch-orange input:checked + .slider { background-color: #f97316; }
+        .switch-blue input:checked + .slider { background-color: #3b82f6; }
+    </style>
+</head>
+<body>
+
+<div class="main-layout">
+    <div class="sidebar" id="sidebar-container">
+       <div class="bg-[#008069] p-4 text-white shadow-md relative z-30">
+            <div class="flex justify-between items-center mb-3">
+                <div class="flex flex-col">
+                    <div class="flex items-center gap-2">
+                        <!-- Judul disesuaikan dengan gambar -->
+                        <h2 class="font-bold text-xl leading-tight tracking-wide">OmniBot</h2>
+                    </div>
+                    
+                    <!-- Token AI Minimalis (Pill Badge Style) -->
+                    <div class="flex items-center gap-1.5 mt-1 bg-black/10 w-fit px-2 py-0.5 rounded-full border border-white/10 shadow-inner">
+                        <svg width="10" height="10" fill="currentColor" viewBox="0 0 16 16" class="text-green-200">
+                            <path d="M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16zm.25-5v1.5a.25.25 0 0 1-.5 0V11H7a.5.5 0 0 1-.5-.5V8.5a.5.5 0 0 1 .5-.5h2a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-.5.5h-.75zM8 4.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z"/>
+                        </svg>
+                        <span id="ai-token-display" class="text-[9px] text-green-50 font-semibold tracking-wide">Memuat token...</span>
+                    </div>
+                </div>
+                
+                <!-- KUMPULAN IKON (Semua menggunakan style OUTLINE yang seragam) -->
+                <div class="flex gap-4 items-center">
+                    
+                    <!-- 1. Tombol Refresh -->
+                    <button onclick="fetchData()" class="hover:text-green-200 transition-colors" title="Sinkronisasi Manual">
+                        <svg width="20" height="20" fill="currentColor" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/><path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/></svg>
+                    </button>
+                    
+                    <!-- 2. Ikon Lonceng + Notifikasi -->
+                    <div class="relative flex items-center justify-center">
+                        <button onclick="document.getElementById('notif-menu').classList.toggle('hidden'); document.getElementById('filter-menu').classList.add('hidden');" class="hover:text-green-200 transition-colors" title="Notifikasi Sistem">
+                            <svg width="20" height="20" fill="currentColor" viewBox="0 0 16 16"><path d="M8 16a2 2 0 0 0 2-2H6a2 2 0 0 0 2 2zM8 1.918l-.797.161A4.002 4.002 0 0 0 4 6c0 .628-.134 2.197-.459 3.742-.16.767-.376 1.566-.663 2.258h10.244c-.287-.692-.502-1.49-.663-2.258C12.134 8.197 12 6.628 12 6a4.002 4.002 0 0 0-3.203-3.92L8 1.917zM14.22 12c.223.447.481.801.78 1H1c.299-.199.557-.553.78-1C2.68 10.2 3 6.88 3 6c0-2.42 1.72-4.44 4.005-4.901a1 1 0 1 1 1.99 0A5.002 5.002 0 0 1 13 6c0 .88.32 4.2 1.22 6z"/></svg>
+                        </button>
+                        <!-- Notif dot diberi border (ring) agar terlihat memotong ikon di bawahnya (Native look) -->
+                        <span id="notif-badge" class="hidden absolute -top-1 -right-1.5 bg-red-500 text-white text-[9px] font-bold w-[15px] h-[15px] flex items-center justify-center rounded-full ring-2 ring-[#008069] animate-pulse">0</span>
+                    </div>
+
+                    <!-- 3. Ikon Filter -->
+                    <div class="relative flex items-center justify-center">
+                        <button onclick="document.getElementById('filter-menu').classList.toggle('hidden'); document.getElementById('notif-menu').classList.add('hidden');" class="hover:text-green-200 transition-colors" title="Filter Chat">
+                            <svg width="20" height="20" fill="currentColor" viewBox="0 0 16 16"><path d="M1.5 1.5A.5.5 0 0 1 2 1h12a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-.128.334L10 8.692V13.5a.5.5 0 0 1-.342.474l-3 1A.5.5 0 0 1 6 14.5V8.692L1.628 3.834A.5.5 0 0 1 1.5 3.5v-2zm1 .5v1.308l4.372 4.858A.5.5 0 0 1 7 8.5v5.306l2-.666V8.5a.5.5 0 0 1 .128-.334L13.5 3.308V2h-11z"/></svg>
+                        </button>
+                    </div>
+
+                    <!-- 4. Ikon Manajemen Device (Monitor) -->
+                    <button onclick="openDevicePanel()" title="Manajemen Device" class="hover:text-green-200 transition-colors">
+                        <svg width="20" height="20" fill="currentColor" viewBox="0 0 16 16"><path d="M2.5 13.5A2.5 2.5 0 0 1 0 11V3a2.5 2.5 0 0 1 2.5-2.5h11A2.5 2.5 0 0 1 16 3v8a2.5 2.5 0 0 1-2.5 2.5H14v2h1.5a.5.5 0 0 1 0 1h-15a.5.5 0 0 1 0-1H2v-2h.5zm0-1h11a1.5 1.5 0 0 0 1.5-1.5V3a1.5 1.5 0 0 0-1.5-1.5h-11A1.5 1.5 0 0 0 1 3v8a1.5 1.5 0 0 0 1.5 1.5z"/></svg>
+                    </button>
+
+                    <!-- 5. Ikon Pengaturan / Gerigi -->
+                    <button id="btn-setting-system" onclick="openSettingPanel()" title="Control Panel" class="hover:text-green-200 transition-colors">
+                        <svg width="20" height="20" fill="currentColor" viewBox="0 0 16 16"><path d="M8 4.754a3.246 3.246 0 1 0 0 6.492 3.246 3.246 0 0 0 0-6.492zM5.754 8a2.246 2.246 0 1 1 4.492 0 2.246 2.246 0 0 1-4.492 0z"/><path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 0 1-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 0 1-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 0 1 .52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 0 1 1.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 0 1 1.255-.52l.292.16c1.64.893 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 0 1 .52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 0 1-.52-1.255l.16-.292c.893-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 0 1-1.255-.52l-.094-.319zm-2.633.283c.246-.835 1.428-.835 1.674 0l.094.319a1.873 1.873 0 0 0 2.693 1.115l.291-.16c.764-.415 1.6.42 1.184 1.185l-.159.292a1.873 1.873 0 0 0 1.116 2.692l.318.094c.835.246.835 1.428 0 1.674l-.319.094a1.873 1.873 0 0 0-1.115 2.693l.16.291c.415.764-.42 1.6-1.185 1.184l-.291-.159a1.873 1.873 0 0 0-2.693 1.116l-.094.318c-.246.835-1.428.835-1.674 0l-.094-.319a1.873 1.873 0 0 0-2.692-1.115l-.292.16c-.764.415-1.6-.42-1.184-1.185l.159-.291A1.873 1.873 0 0 0 1.945 8.93l-.319-.094c-.835-.246-.835-1.428 0-1.674l.319-.094A1.873 1.873 0 0 0 3.06 4.377l-.16-.292c-.415-.764.42-1.6 1.185-1.184l.292.159a1.873 1.873 0 0 0 2.692-1.115l.094-.319z"/></svg>
+                    </button>
+                    
+                    <!-- 6. Ikon Logout (BARU) -->
+                    <button onclick="doLogout()" title="Keluar / Logout" class="hover:text-red-400 transition-colors ml-1">
+                        <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- DROPDOWN MENU NOTIFIKASI (Tersembunyi) -->
+            <div id="notif-menu" class="hidden absolute top-14 left-4 right-4 bg-white rounded-lg shadow-2xl border border-gray-200 z-50 flex flex-col max-h-80 overflow-hidden">
+                <div class="bg-red-50 text-red-700 text-xs font-bold p-2.5 flex justify-between items-center border-b border-red-100">
+                    <span>🚨 Notifikasi Sistem</span>
+                    <button onclick="document.getElementById('notif-menu').classList.add('hidden')" class="hover:bg-red-200 text-red-700 rounded-full w-5 h-5 flex items-center justify-center transition-colors">&times;</button>
+                </div>
+                <div id="notif-list" class="overflow-y-auto p-2 space-y-2 bg-gray-50 flex-1">
+                    <!-- Isi notifikasi dari JS akan masuk ke sini -->
+                </div>
+            </div>
+
+            <!-- DROPDOWN MENU FILTER (Tersembunyi) -->
+            <div id="filter-menu" class="hidden absolute top-14 right-4 w-[280px] bg-white rounded-xl shadow-2xl border border-gray-200 z-50 flex flex-col p-4 text-gray-800">
+                <div class="flex justify-between items-center border-b border-gray-100 pb-2 mb-3">
+                    <span class="text-sm font-extrabold text-gray-700">Filter Obrolan</span>
+                    <button onclick="document.getElementById('filter-menu').classList.add('hidden')" class="text-gray-400 hover:bg-gray-100 rounded-full w-6 h-6 flex items-center justify-center transition-colors">&times;</button>
+                </div>
+                
+                <div class="space-y-4">
+                    <div class="flex flex-col gap-1.5">
+                        <label class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Perangkat Utama</label>
+                        <select id="device-select" onchange="handleDeviceChange()" class="w-full bg-gray-50 rounded-lg text-xs p-2 outline-none border border-gray-200 focus:border-[#008069] transition-all cursor-pointer">
+                            <option value="Semua">Semua Perangkat</option>
+                        </select>
+                    </div>
+                    <div class="flex flex-col gap-1.5">
+                        <label class="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Kategori Label</label>
+                        <select id="label-select" onchange="handleLabelChange()" class="w-full bg-gray-50 rounded-lg text-xs p-2 outline-none border border-gray-200 focus:border-[#008069] transition-all cursor-pointer">
+                            <option value="Semua">Semua Label</option>
+                        </select>
+                    </div>
+                    
+                    <div class="pt-3 border-t border-gray-100 space-y-3">
+                        <div class="flex justify-between items-center">
+                            <span class="text-xs font-bold text-orange-500 uppercase">Belum Balas</span>
+                            <label class="switch switch-orange scale-90"><input type="checkbox" id="belum-balas-filter" onchange="handleBelumBalasFilterChange()"><span class="slider"></span></label>
+                        </div>
+                        <div class="flex justify-between items-center">
+                            <span class="text-xs font-bold text-red-500 uppercase">Unsub AI</span>
+                            <label class="switch scale-90"><input type="checkbox" id="unsub-filter" onchange="handleUnsubFilterChange()"><span class="slider"></span></label>
+                        </div>
+                        <div class="flex justify-between items-center">
+                            <span class="text-xs font-bold text-blue-500 uppercase">Pesan Unread</span>
+                            <label class="switch switch-blue scale-90"><input type="checkbox" id="unread-filter" onchange="handleUnreadFilterChange()"><span class="slider"></span></label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SEARCH BAR -->
+            <div class="relative mt-2 flex items-center">
+                <input type="text" id="search-input" oninput="handleSearch()" onkeypress="handleServerSearch(event)" placeholder="Cari kontak (Tekan Enter u/ Database)..."
+                    class="w-full pl-4 pr-10 py-2 bg-[#006d59] text-white placeholder-gray-200 rounded-full text-sm outline-none border-none focus:bg-[#005c4b] transition-colors">
+                
+                <div id="search-spinner" class="hidden absolute right-3 flex items-center justify-center">
+                    <svg class="animate-spin h-5 w-5 text-white opacity-80" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                </div>
+            </div>
+        </div>
+
+        <!-- HAPUS 2 DIV LAMA DI BAWAH INI JIKA MASIH ADA DI KODEMU: -->
+        <!-- <div class="flex gap-2 p-2 bg-white border-b items-center">...</div> -->
+        <!-- <div class="flex justify-around p-2 bg-white border-b">...</div> -->
+
+        <div id="contact-list" class="flex-1 overflow-y-auto bg-white">
+            <div class="p-10 text-center"><div class="spinner mx-auto"></div></div>
+        </div>
+        <p class="text-[9px] text-gray-400 text-center py-2 bg-gray-50 border-t" id="sync-status">Memuat data...</p>
+    </div>
+
+    <div class="chat-area" id="chat-container">
+        <div id="active-header" class="bg-[#008069] p-3 text-white flex items-center gap-3 z-10 shadow-md">
+            <button onclick="closeChat()" class="md:hidden p-1 mr-[-8px]">
+                <svg width="24" height="24" fill="currentColor" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M15 8a.5.5 0 0 0-.5-.5H2.707l3.147-3.146a.5.5 0 1 0-.708-.708l-4 4a.5.5 0 0 0 0 .708l4 4a.5.5 0 0 0 .708-.708L2.707 8.5H14.5A.5.5 0 0 0 15 8z"/></svg>
+            </button>
+            <div id="chat-avatar" onclick="openEditModal()" class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg border border-white/20 cursor-pointer hover:opacity-80 transition-opacity shadow-sm ring-2 ring-transparent hover:ring-white/50" title="Edit Profil">?</div>
+            <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2">
+                    <div id="chat-name" class="font-bold truncate leading-tight">Pilih Kontak</div>
+                    <!-- Tombol Edit Baru -->
+                    <button onclick="openEditModal()" class="text-white hover:text-gray-200 cursor-pointer flex items-center justify-center" title="Edit Profil">
+                        <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z"/></svg>
+                    </button>
+                </div>
+                <div id="chat-id" class="text-[10px] opacity-80 truncate">ID: -</div>
+            </div>
+            <div id="chat-badges" class="flex gap-1"></div>
+        </div>
+
+        <div id="chat-window" class="flex-1 overflow-y-auto p-3 flex flex-col space-y-1">
+            <div id="chat-content" class="flex flex-col">
+                <div class="mt-20 text-center text-gray-400 italic text-sm px-10">Pilih pesan untuk mulai mengobrol.</div>
+            </div>
+        </div>
+
+<div id="input-container" class="input-wrapper hidden">
+            <input type="file" id="file-input" class="hidden" onchange="handleFileSelect(event)" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx">
+            
+            <div id="attachment-panel" class="hidden px-3 pt-2 pb-1 bg-gray-200/50 border-b border-gray-200 flex gap-2 items-center transition-all shadow-inner">
+                <div class="bg-white p-2 rounded-lg shadow-sm flex-1 flex items-center justify-between">
+                    <div class="flex items-center gap-2 overflow-hidden">
+                        <span id="file-icon" class="text-lg">📎</span>
+                        <span id="file-name-display" class="text-xs font-semibold text-gray-700 truncate">Pilih file...</span>
+                    </div>
+                    <button onclick="clearAttachment()" class="text-red-500 hover:bg-red-50 p-1 rounded-md text-xs font-bold transition-colors">Hapus</button>
+                </div>
+            </div>
+
+            <div class="emoji-panel">
+                <span class="emoji-btn text-[11px] font-black bg-amber-400 border-amber-500 text-amber-900" onclick="addText('AE')">AE</span>
+                <span class="emoji-btn text-[11px] font-black bg-amber-400 border-amber-500 text-amber-900" onclick="addText('AEr')">AEr</span>
+                <span class="emoji-btn" onclick="addText('🙏')">🙏</span>
+                <span class="emoji-btn" onclick="addText('😊')">😊</span>
+                <span class="emoji-btn" onclick="addText('👍')">👍</span>
+            </div>
+            
+            <div class="input-area">
+                <button onclick="document.getElementById('file-input').click()" class="text-gray-500 hover:text-[#008069] p-2 transition-colors -ml-1" title="Lampirkan File">
+                    <svg width="22" height="22" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg>
+                </button>
+                
+                <textarea id="msg-input" class="message-input shadow-sm" placeholder="Ketik pesan..." rows="1"></textarea>
+                <button onclick="triggerSend()" id="send-btn" class="bg-[#00a884] text-white p-2.5 rounded-full shadow-md active:scale-90 transition-transform flex items-center justify-center min-w-[40px] h-[40px]">
+                    <div id="send-icon">
+                        <svg width="20" height="20" fill="currentColor" viewBox="0 0 16 16"><path d="M15.854.146a.5.5 0 0 1 .11.54l-5.819 14.547a.75.75 0 0 1-1.329.124l-3.178-4.995L.643 7.184a.75.75 0 0 1 .124-1.33L15.314.037a.5.5 0 0 1 .54.11ZM6.636 10.07l2.761 4.338L14.13 2.576 6.636 10.07Zm6.787-8.201L1.591 6.602l4.339 2.76 7.494-7.493Z"/></svg>
+                    </div>
+                    <div id="send-loading" class="spinner-small hidden"></div>
+                </button>
+            </div>
+        </div>
+   </div> 
+</div>
+
+<script>
+    // ====================================================================
+    // KONFIGURASI OTOMATIS (VIA LIBRARY SUNTIKAN)
+    // ====================================================================
+    // Variabel ini diisi otomatis oleh fungsi doGetLibrary dari file .gs
+    let SHEET_URL = "<?= SHEET_URL ?>";
+    let GAS_URL = "<?= GAS_URL ?>";
+    
+    let allData = [];
+    let currentContactId = null;
+    let searchTerm = "";
+    let selectedDevice = "Semua";
+    let selectedLabel = "Semua"; 
+    let filterUnsubOnly = false;
+    let filterBelumBalasOnly = false;
+    let filterPendingOnly = false;
+
+    // --- VARIABEL LOGIN SISTEM ---
+    let loggedInUser = null;
+    let isMasterAdmin = false;
+    let userAllowedAccounts = [];
+
+    window.onload = () => {
+        const input = document.getElementById('msg-input');
+        input.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = (this.scrollHeight) + 'px';
+        });
+
+        // --- CEK SESI LOGIN DI LOCALSTORAGE BROWSER ---
+        const savedUser = localStorage.getItem('omni_user');
+        if (savedUser) {
+            loggedInUser = savedUser;
+            isMasterAdmin = localStorage.getItem('omni_isMaster') === 'true';
+            userAllowedAccounts = JSON.parse(localStorage.getItem('omni_roles') || "[]");
+            
+            document.getElementById('login-modal').classList.add('hidden');
+            
+            // Aturan 3: Jika bukan master, hilangkan tombol gerigi
+            if(!isMasterAdmin) {
+                const btnSetting = document.getElementById('btn-setting-system');
+                if(btnSetting) btnSetting.classList.add('hidden');
+            }
+            
+            // Jalankan sistem utama karena sudah login
+            fetchData();
+            fetchAIToken();
+            fetchSilentDeviceCache(); // <--- TAMBAHKAN INI
+            setInterval(fetchData, 15000); 
+            setInterval(fetchAIToken, 60000);
+        }
+    };
+
+    function doLogin() {
+        const u = document.getElementById('login-user').value.trim();
+        const p = document.getElementById('login-pass').value.trim();
+        const btn = document.getElementById('login-btn');
+        
+        if(u === "" || p === "") { showToast("Username dan Password wajib diisi!"); return; }
+        
+        btn.innerText = "Memverifikasi..."; btn.disabled = true;
+        
+        google.script.run.withSuccessHandler(res => {
+            if(res.success) {
+                loggedInUser = u;
+                isMasterAdmin = res.isMaster;
+                userAllowedAccounts = res.roles; 
+                
+                // --- SIMPAN SESI KE LOCALSTORAGE ---
+                localStorage.setItem('omni_user', u);
+                localStorage.setItem('omni_isMaster', res.isMaster);
+                localStorage.setItem('omni_roles', JSON.stringify(res.roles));
+                
+                document.getElementById('login-modal').classList.add('hidden');
+                showToast("Login Berhasil!");
+                
+                if(!isMasterAdmin) {
+                    const btnSetting = document.getElementById('btn-setting-system');
+                    if(btnSetting) btnSetting.classList.add('hidden');
+                }
+                
+                fetchData();
+                fetchAIToken();
+                setInterval(fetchData, 15000); 
+                setInterval(fetchAIToken, 60000);
+            } else {
+                showToast(res.msg);
+                btn.innerText = "Login"; btn.disabled = false;
+            }
+        }).withFailureHandler(err => {
+            showToast("Gagal terhubung ke server.");
+            btn.innerText = "Login"; btn.disabled = false;
+        }).verifyLoginNative(SHEET_URL, u, p);
+    }
+
+    // --- FUNGSI LOGOUT BARU ---
+    function doLogout() {
+        if(!confirm("Yakin ingin keluar dari akun ini?")) return;
+        localStorage.removeItem('omni_user');
+        localStorage.removeItem('omni_isMaster');
+        localStorage.removeItem('omni_roles');
+        location.reload(); // Refresh halaman agar kembali ke layar login
+    }
+
+    function openChat() { document.getElementById('chat-container').classList.add('active'); }
+    function closeChat() { document.getElementById('chat-container').classList.remove('active'); currentContactId = null; renderSidebar(); }
+
+    // =========================================================
+    // CONTROL PANEL LOGIC
+    // =========================================================
+    let deviceCache = [];
+
+    // FUNGSI COPY WEBHOOK
+    function copyWebhookUrl() {
+        const input = document.getElementById('webhook-url-display');
+        input.select();
+        input.setSelectionRange(0, 99999);
+        navigator.clipboard.writeText(input.value).then(() => {
+            showToast("URL Webhook disalin ke Keyboard!");
+        });
+    }
+
+    // === FUNGSI BARU: MEMBUKA MODAL MANAJEMEN DEVICE ===
+    function openDevicePanel() {
+        document.getElementById('config-modal').classList.remove('hidden');
+        document.getElementById('config-loading').classList.remove('hidden');
+        
+        // Sembunyikan bagian Setting Utama, tampilkan bagian Device List
+        document.getElementById('config-main').classList.add('hidden');
+        document.getElementById('section-device-list').classList.remove('hidden');
+        document.getElementById('section-sys-settings').classList.add('hidden');
+        
+        document.getElementById('config-modal-title').innerText = "📱 Manajemen Device";
+        
+        google.script.run
+            .withSuccessHandler(function(data) {
+                if (!data || typeof data !== 'object') { showToast("Data Corrupt!"); closeConfigModal(); return; }
+                
+                // --- TAMBAHKAN BARIS INI AGAR URL WEBHOOK TERBACA ---
+                if(document.getElementById('webhook-url-display')) {
+                    document.getElementById('webhook-url-display').value = data.webhookUrl || "A2 Kosong / URL belum dideteksi";
+                }
+                // ---------------------------------------------------
+                
+                let rawDevices = data.devices || []; 
+                
+                // RULE 2: Filter Menu Manajemen Device Kolom B (Akun CS)
+                if (!isMasterAdmin) {
+                    deviceCache = rawDevices.filter(d => {
+                        let akunDevice = String(d.fullRow[1] || "").trim();
+                        return userAllowedAccounts.includes(akunDevice);
+                    });
+                } else {
+                    deviceCache = rawDevices;
+                }
+                
+                renderDeviceList();
+                
+                document.getElementById('config-loading').classList.add('hidden');
+                document.getElementById('config-main').classList.remove('hidden');
+            })
+            .withFailureHandler(function(e) { showToast("Gagal memuat pengaturan!"); closeConfigModal(); })
+            .getSettingsForUI(SHEET_URL);
+    }
+
+    // === FUNGSI BARU: MEMBUKA MODAL SETTING (GERIGI) ===
+    function openSettingPanel() {
+        document.getElementById('config-modal').classList.remove('hidden');
+        document.getElementById('config-loading').classList.remove('hidden');
+        
+        document.getElementById('config-main').classList.add('hidden');
+        document.getElementById('section-device-list').classList.add('hidden');
+        document.getElementById('section-sys-settings').classList.remove('hidden');
+        
+        document.getElementById('config-modal-title').innerText = "⚙️ Pengaturan Sistem";
+        
+        google.script.run
+            .withSuccessHandler(function(data) {
+                if (!data || typeof data !== 'object') { showToast("Data Corrupt!"); closeConfigModal(); return; }
+                
+                // MENGISI DATA UI & AI
+                const setVal = (id, val) => { if(document.getElementById(id)) document.getElementById(id).value = val; };
+                
+                setVal('ui-limit', data.ui.limitData);
+                setVal('ai-max-tokens', data.ai.maxTokens);
+                setVal('ai-temp', data.ai.temp);
+                setVal('ai-limit-history', data.ai.limitHistory);
+                setVal('ai-warmer', data.ai.warmer);
+                setVal('ai-qty-warmer', data.ai.qtyWarmer);
+                setVal('ai-model', data.ai.modelGemini);
+                setVal('ai-token', data.ai.tokenGemini);
+                
+                // MENGISI DATA SEND ARRAY
+                data.send.forEach((val, i) => { 
+                    // Jika indeks 5 (Rasio Warmer) atau 7 (Rasio Tier2) yg datanya desimal
+                    if (i === 5 || i === 7) {
+                        let persen = parseFloat(val) || 0;
+                        setVal(`send-${i}`, (persen * 100)); 
+                    } else {
+                        setVal(`send-${i}`, val); 
+                    }
+                });
+
+                // --- TRIGGER PENGECEKAN TAMPILAN AWAL ---
+                togglePesanStatis();
+
+                // GENERATE & MENGISI DATA LABELS SECARA DINAMIS
+                let lblHtml = '';
+                data.labels.forEach((lbl, i) => {
+                   lblHtml += `<div class="flex gap-2 items-center bg-[#f0f2f5] p-1.5 rounded-xl">
+                     <span class="text-[10px] font-bold w-5 text-center text-gray-500">${i+1}</span>
+                     <input id="lbl-nama-${i}" value="${lbl.nama}" class="w-1/3 bg-white px-2 py-1.5 rounded-lg text-[13px] border-none outline-none" placeholder="Nama Label">
+                     <input id="lbl-ket-${i}" value="${lbl.ket}" class="flex-1 bg-white px-2 py-1.5 rounded-lg text-[13px] border-none outline-none" placeholder="Keterangan">
+                   </div>`;
+                });
+                document.getElementById('labels-container').innerHTML = lblHtml;
+
+                // GENERATE & MENGISI DATA ADMINS SECARA DINAMIS (CHECKBOX VIEW AKUN)
+                let admHtml = '';
+                data.admins.forEach((adm, i) => {
+                   let selectedRoles = adm.role ? adm.role.split(',').map(s => s.trim()) : [];
+                   
+                   // Buat Checkbox Master Admin (Selalu di Atas)
+                   let isMaster = selectedRoles.includes('Master Admin') ? 'checked' : '';
+                   let cbHtml = `
+                     <label class="flex items-center gap-1.5 p-1.5 hover:bg-gray-100 rounded cursor-pointer border border-green-100 bg-green-50 mb-1 col-span-2 sm:col-span-1">
+                         <input type="checkbox" value="Master Admin" class="adm-role-${i} w-3.5 h-3.5 text-[#008069] rounded border-gray-300 focus:ring-[#008069]" ${isMaster}>
+                         <span class="text-[11px] font-extrabold text-[#008069]">Master Admin</span>
+                     </label>
+                   `;
+
+                   // Buat Checkbox Dinamis dari Daftar Akun di Kolom B
+                   data.akunList.forEach(akun => {
+                       let isChecked = selectedRoles.includes(akun) ? 'checked' : '';
+                       cbHtml += `
+                         <label class="flex items-center gap-1.5 p-1.5 hover:bg-gray-100 rounded cursor-pointer border border-transparent">
+                             <input type="checkbox" value="${akun}" class="adm-role-${i} w-3.5 h-3.5 text-[#008069] rounded border-gray-300 focus:ring-[#008069]" ${isChecked}>
+                             <span class="text-[11px] font-medium text-gray-700 truncate" title="${akun}">${akun}</span>
+                         </label>
+                       `;
+                   });
+
+                   admHtml += `<div class="flex flex-col gap-2 bg-gray-50 p-3 rounded-xl border border-gray-100 mb-2 shadow-sm">
+                     <div class="flex justify-between items-center mb-1">
+                         <span class="bg-gray-200 text-gray-600 font-bold px-2 py-0.5 rounded text-[10px]">Admin ${i+1}</span>
+                     </div>
+                     <div class="flex flex-col sm:flex-row gap-2 w-full">
+                         <input id="adm-user-${i}" value="${adm.user}" class="w-full sm:flex-1 bg-white px-3 py-2.5 rounded-lg text-[13px] border border-gray-200 outline-none focus:border-[#008069]" placeholder="Email / Username">
+                         <input id="adm-pass-${i}" value="${adm.pass}" class="w-full sm:flex-1 bg-white px-3 py-2.5 rounded-lg text-[13px] border border-gray-200 outline-none focus:border-[#008069]" placeholder="Password" type="text">
+                     </div>
+                     <div class="w-full mt-1 border-t border-gray-200 pt-2">
+                         <span class="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5 block">View Akun (C${27+i})</span>
+                         <div class="bg-white border border-gray-200 rounded-lg p-1.5 max-h-[120px] overflow-y-auto grid grid-cols-2 sm:grid-cols-3 gap-1 custom-scrollbar">
+                             ${cbHtml}
+                         </div>
+                     </div>
+                   </div>`;
+                });
+                document.getElementById('admins-container').innerHTML = admHtml;
+                
+                // Tampilkan Modal
+                document.getElementById('config-loading').classList.add('hidden');
+                document.getElementById('config-main').classList.remove('hidden');
+                
+                // Auto-resize textareas (Token, Warmer, dan Model)
+                const textareasToResize = ['ai-token', 'ai-warmer', 'ai-model'];
+                textareasToResize.forEach(id => {
+                    const el = document.getElementById(id);
+                    if(el) {
+                        el.style.height = 'auto';
+                        el.style.height = el.scrollHeight + 'px';
+                    }
+                });
+            })
+            .withFailureHandler(function(e) { showToast("Gagal memuat pengaturan!"); closeConfigModal(); })
+            .getSettingsForUI(SHEET_URL);
+    }
+
+
+    function closeConfigModal() {
+        document.getElementById('config-modal').classList.add('hidden');
+    }
+
+    function saveSysSettings() {
+        const btn = document.getElementById('btn-save-sys');
+        btn.innerText = "Menyimpan..."; btn.disabled = true;
+        
+        const getVal = (id) => document.getElementById(id) ? document.getElementById(id).value : "";
+        
+        // Kumpulkan Labels
+        let labelsArr = [];
+        for(let i=0; i<10; i++) {
+            labelsArr.push({ nama: getVal(`lbl-nama-${i}`), ket: getVal(`lbl-ket-${i}`) });
+        }
+        
+        // Kumpulkan Admins
+        let adminsArr = [];
+        for(let i=0; i<4; i++) {
+            // Tangkap semua checkbox yang dicentang pada admin ini
+            let roleCheckboxes = document.querySelectorAll(`.adm-role-${i}:checked`);
+            // Gabungkan valuenya dipisah koma (Misal: "Master Admin, BWA, BWKR")
+            let selectedRoles = Array.from(roleCheckboxes).map(cb => cb.value).join(', ');
+            
+            adminsArr.push({ 
+                user: getVal(`adm-user-${i}`), 
+                pass: getVal(`adm-pass-${i}`), 
+                role: selectedRoles 
+            });
+        }
+
+        // Kumpulkan Send
+        let sendArr = [];
+        for(let i=0; i<8; i++) {
+            let val = getVal(`send-${i}`);
+            // Kembalikan Rasio Warmer & Tier2 dari (50) menjadi desimal (0.5)
+            if (i === 5 || i === 7) {
+                val = (parseFloat(val) / 100) || 0;
+            }
+            sendArr.push(val);
+        }
+
+        // BUNGKUS KE DALAM OBJECT UTAMA
+        const dataObj = {
+            ui: { limitData: getVal('ui-limit') },
+            ai: {
+                maxTokens: getVal('ai-max-tokens'),
+                temp: getVal('ai-temp'),
+                limitHistory: getVal('ai-limit-history'),
+                warmer: getVal('ai-warmer'),
+                qtyWarmer: getVal('ai-qty-warmer'),
+                modelGemini: getVal('ai-model'),
+                tokenGemini: getVal('ai-token')
+            },
+            send: sendArr,
+            labels: labelsArr,
+            admins: adminsArr
+        };
+        
+        google.script.run
+            .withSuccessHandler(function(res) {
+                showToast(res);
+                btn.innerText = "Simpan Semua Pengaturan Sistem"; btn.disabled = false;
+                fetchData(); 
+            })
+            .withFailureHandler(function(err){
+                showToast("Error Server!");
+                btn.innerText = "Simpan Semua Pengaturan Sistem"; btn.disabled = false;
+            })
+            .saveGeneralSettings(SHEET_URL, dataObj); 
+    }
+
+    function renderDeviceList() {
+        const list = document.getElementById('device-list');
+        if(!list) return;
+        list.innerHTML = "";
+        
+        if(deviceCache.length === 0) {
+            list.innerHTML = "<p class='text-xs text-gray-400 italic col-span-2 md:col-span-5 text-center py-6 bg-gray-50 rounded-xl border border-dashed'>Belum ada device terdaftar.</p>";
+            return;
+        }
+        
+        // Helper: Deteksi apakah format tanggal sudah kedaluwarsa
+        function isExpired(dateStr) {
+            if (!dateStr || dateStr.trim() === "" || dateStr === "-") return false; 
+            
+            const parts = dateStr.split('/');
+            if (parts.length !== 3) return false;
+            
+            const monthMap = { 'Jan':0, 'Feb':1, 'Mar':2, 'Apr':3, 'Mei':4, 'Jun':5, 'Jul':6, 'Ags':7, 'Sep':8, 'Okt':9, 'Nov':10, 'Des':11, 'Aug':7, 'Dec':11 };
+            
+            const day = parseInt(parts[0], 10);
+            const monthStr = parts[1].substring(0, 3);
+            const month = monthMap[monthStr] !== undefined ? monthMap[monthStr] : -1;
+            const year = parseInt(parts[2], 10) + 2000;
+            
+            if (month === -1) return false;
+            
+            const expDate = new Date(year, month, day);
+            const today = new Date();
+            today.setHours(0,0,0,0);
+            expDate.setHours(0,0,0,0);
+            
+            return expDate < today; 
+        }
+        
+        deviceCache.forEach((dev, idx) => {
+            if(!dev.fullRow) return;
+            const row = dev.fullRow;
+            
+            // MAPPING DATA
+            const devName = String(row[0] || "-");      // Kolom A
+            const rasioCatatan = String(row[3] || "-"); // Kolom D (Catatan Teks Panjang)
+            const statusRun = String(row[5] || "Stop"); // Kolom F
+            const koneksiApi = String(row[15] || "-");  // Kolom P
+            
+            // MAPPING DATA BARU (IN/OUT & QTY IN/OUT)
+            const inVal = String(row[16] || "0");       // Kolom Q (IN)
+            const outVal = String(row[17] || "0%");     // Kolom R (OUT)
+            const qtInVal = String(row[18] || "0");     // Kolom S (QTIn)
+            const qtOutVal = String(row[19] || "0%");   // Kolom T (QTOut)
+            
+            const qtyAer = String(row[20] || "0");      // Kolom U
+            const dbKontak = String(row[22] || "0");    // Kolom W
+            const masaAktifRaw = String(row[24] || "-");// Kolom Y
+            
+            // DETEKSI MASA AKTIF
+            const hangusText = masaAktifRaw.toUpperCase().includes("HANGUS");
+            const expiredDate = isExpired(masaAktifRaw);
+            const isAlertMasaAktif = hangusText || expiredDate;
+            const masaAktifColor = isAlertMasaAktif ? "text-red-600 animate-pulse font-extrabold" : "text-gray-800 font-bold";
+
+            // DESAIN BADGE KONEKSI API
+            const isKoneksi = koneksiApi.toLowerCase().includes("terkoneksi");
+            const apiBadge = isKoneksi 
+                ? `<span class="text-green-700 bg-green-100 border border-green-200 px-2 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide">Terkoneksi</span>` 
+                : `<span class="text-red-700 bg-red-100 border border-red-200 px-2 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide">${koneksiApi || 'Terputus'}</span>`;
+            
+            const topBorderColor = isKoneksi ? "bg-green-400" : "bg-red-400";
+            
+            // FLOATING ALERT MASA AKTIF
+            const floatingAlert = isAlertMasaAktif 
+                ? `<div class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-red-600/95 text-white px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest text-center shadow-lg border border-red-400 backdrop-blur-sm animate-pulse z-10 w-[85%]">⚠️ URGENT!<br>Isi Ulang Pulsa</div>` 
+                : ``;
+            
+            list.innerHTML += `
+                <div class="flex flex-col p-2.5 border border-gray-200 rounded-xl bg-white hover:shadow-lg transition-all duration-300 gap-2 relative overflow-hidden ${isAlertMasaAktif ? 'opacity-90' : ''}">
+                    
+                    ${floatingAlert}
+                    
+                    <!-- Dekorasi Garis Atas -->
+                    <div class="absolute top-0 left-0 w-full h-1 ${topBorderColor}"></div>
+
+                    <!-- Header: Nama Device dan Tombol Aksi Minimalis -->
+                    <div class="border-b border-gray-100 pb-2 mt-1 flex justify-between items-start">
+                        <h4 class="font-extrabold text-[12px] text-gray-800 truncate tracking-tight pr-2 pt-1 ${isAlertMasaAktif ? 'opacity-30' : ''}" title="${devName}">💻 ${devName}</h4>
+                        
+                        <!-- TOMBOL MINIMALIS KANAN ATAS -->
+                        <div class="flex gap-1.5 shrink-0 relative z-20">
+                            <button onclick="editDevForm(${idx})" class="p-1.5 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white border border-blue-100 rounded-md transition-all shadow-sm flex items-center justify-center" title="Edit Data">
+                                <svg width="11" height="11" fill="currentColor" viewBox="0 0 16 16"><path d="M12.854.146a.5.5 0 0 0-.707 0L10.5 1.793 14.207 5.5l1.647-1.646a.5.5 0 0 0 0-.708l-3-3zm.646 6.061L9.793 2.5 3.293 9H3.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.207l6.5-6.5zm-7.468 7.468A.5.5 0 0 1 6 13.5V13h-.5a.5.5 0 0 1-.5-.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.5-.5V10h-.5a.499.499 0 0 1-.175-.032l-.179.178a.5.5 0 0 0-.11.168l-2 5a.5.5 0 0 0 .65.65l5-2a.5.5 0 0 0 .168-.11l.178-.178z"/></svg>
+                            </button>
+                            <button onclick="deleteDev(${idx})" class="p-1.5 bg-red-50 text-red-600 hover:bg-red-600 hover:text-white border border-red-100 rounded-md transition-all shadow-sm flex items-center justify-center" title="Hapus Permanen">
+                                <svg width="11" height="11" fill="currentColor" viewBox="0 0 16 16"><path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/><path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/></svg>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Body: Grid Info (Lebih Padat) -->
+                    <div class="grid grid-cols-2 gap-y-2 gap-x-2 flex-1 mt-1 ${isAlertMasaAktif ? 'opacity-30 blur-[1px]' : ''}">
+                        
+                        <!-- Baris 1: Koneksi & Status -->
+                        <div class="flex flex-col gap-0.5">
+                            <span class="text-[8px] text-gray-400 font-bold uppercase tracking-wider">Koneksi API</span>
+                            <div class="flex items-center">${apiBadge}</div>
+                        </div>
+                        <div class="flex flex-col gap-0.5">
+                            <span class="text-[8px] text-gray-400 font-bold uppercase tracking-wider">Status Send</span>
+                            <span class="text-[11px] font-extrabold ${statusRun.toLowerCase().includes('run') ? 'text-[#008069]' : 'text-red-600'}">${statusRun}</span>
+                        </div>
+
+                        <!-- Baris 2: Catatan Ringan (Catatan Rasio) FULL WIDTH -->
+                        <div class="col-span-2 bg-yellow-50/40 border border-yellow-100 rounded px-2 py-1.5 flex flex-col gap-0.5">
+                            <span class="text-[8px] text-yellow-700 font-bold uppercase tracking-wider">Catatan Sistem</span>
+                            <span class="text-[9.5px] text-gray-600 italic leading-snug line-clamp-2" title="${rasioCatatan}">${rasioCatatan}</span>
+                        </div>
+
+                        <!-- Baris 3: Ratio 1d & Ratio 30d -->
+                        <div class="flex flex-col gap-0.5">
+                            <span class="text-[8px] text-gray-400 font-bold uppercase tracking-wider">Ratio 1d</span>
+                            <span class="text-[11px] font-bold text-gray-700">${outVal} <span class="text-[9px] text-gray-500 font-normal">(${inVal})</span></span>
+                        </div>
+                        <div class="flex flex-col gap-0.5">
+                            <span class="text-[8px] text-gray-400 font-bold uppercase tracking-wider">Ratio 30d</span>
+                            <span class="text-[11px] font-bold text-gray-700">${qtOutVal} <span class="text-[9px] text-gray-500 font-normal">(${qtInVal})</span></span>
+                        </div>
+
+                        <!-- Baris 4: Qty AEr & DB Kontak -->
+                        <div class="flex flex-col gap-0.5">
+                            <span class="text-[8px] text-gray-400 font-bold uppercase tracking-wider">Qty AEr</span>
+                            <span class="text-[11px] font-bold text-gray-700">${qtyAer} <span class="text-[8px] text-gray-400 font-normal">Antrean</span></span>
+                        </div>
+                        <div class="flex flex-col gap-0.5">
+                            <span class="text-[8px] text-gray-400 font-bold uppercase tracking-wider">DB Kontak</span>
+                            <span class="text-[11px] font-bold text-gray-700">${dbKontak} <span class="text-[8px] text-gray-400 font-normal">Nomor</span></span>
+                        </div>
+                        
+                        <!-- Baris 5: Masa Aktif (Full Width Kolom) -->
+                        <div class="col-span-2 mt-0.5 bg-gray-50 border-gray-100 p-1.5 rounded-lg border flex items-center justify-between">
+                            <span class="text-[8px] text-gray-500 font-bold uppercase tracking-wider">Masa Aktif</span>
+                            <span class="text-[10px] ${masaAktifColor}">${masaAktifRaw}</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+    }
+
+    // HELPER: Mengubah format "25/Jul/26" dari Sheet menjadi format Kalender "YYYY-MM-DD"
+    function parseDateForInput(dateStr) {
+        if (!dateStr || dateStr.trim() === "" || dateStr === "-") return "";
+        const parts = dateStr.split('/');
+        if (parts.length === 3) {
+            const monthMap = { 'Jan':'01', 'Feb':'02', 'Mar':'03', 'Apr':'04', 'Mei':'05', 'Jun':'06', 'Jul':'07', 'Ags':'08', 'Sep':'09', 'Okt':'10', 'Nov':'11', 'Des':'12', 'Aug':'08', 'Dec':'12' };
+            const day = parts[0].padStart(2, '0');
+            const month = monthMap[parts[1].substring(0,3)] || '01';
+            const year = "20" + parts[2].replace(/\D/g, '');
+            return `${year}-${month}-${day}`;
+        }
+        return "";
+    }
+
+    // HELPER: Mengubah format Kalender "YYYY-MM-DD" menjadi "DD/MMM/YY" untuk disimpan ke Sheet
+    function formatDateForSheet(dateStr) {
+        if (!dateStr) return "";
+        const parts = dateStr.split('-');
+        if (parts.length === 3) {
+            const monthMap = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'];
+            const day = parseInt(parts[2], 10);
+            const month = monthMap[parseInt(parts[1], 10) - 1];
+            const year = parts[0].substring(2, 4);
+            return `${day}/${month}/${year}`;
+        }
+        return dateStr;
+    }
+
+    // LISTENER UNTUK MENYEMBUNYIKAN PREFIX URL JIKA API MENGANDUNG "STARSENDER"
+    function togglePrefixUrlVisibility() {
+        const apiUrlInput = document.getElementById('dev-col-9').value.toLowerCase();
+        const prefixContainer = document.getElementById('dev-col-10').parentElement;
+        
+        if (apiUrlInput.includes('starsender')) {
+            prefixContainer.style.display = 'none';
+        } else {
+            prefixContainer.style.display = 'block';
+        }
+    }
+    
+    // Pasang event listener ke input API URL
+    document.addEventListener('DOMContentLoaded', () => {
+        document.getElementById('dev-col-9').addEventListener('input', togglePrefixUrlVisibility);
+    });
+
+    function openDevForm() {
+        document.getElementById('dev-title').innerText = "Tambah Device Baru";
+        document.getElementById('dev-index').value = ""; 
+        
+        // MUNCULKAN KOTAK WEBHOOK DI TAMBAH BARU (Sesuai Permintaan)
+        document.getElementById('webhook-container').classList.remove('hidden');
+
+        document.getElementById('dev-col-0').value = ""; 
+        document.getElementById('dev-col-1').value = ""; 
+        document.getElementById('dev-col-2').value = "ON"; 
+        document.getElementById('dev-col-4').value = "NEW";
+        document.getElementById('dev-col-25').value = "50%";
+        document.getElementById('dev-col-6').value = ""; 
+        document.getElementById('dev-col-7').value = ""; 
+        document.getElementById('dev-col-8').value = ""; 
+        document.getElementById('dev-col-9').value = "https://api.starsender.online/api/send"; 
+        document.getElementById('dev-col-10').value = ""; 
+        document.getElementById('dev-col-11').value = "ON"; 
+        document.getElementById('dev-col-12').value = ""; 
+        document.getElementById('dev-col-13').value = 
+        "Contoh output jika transfer: Queue|Transfer, Donat, beli donat keju, 10, Pcs, 3000, 30000\n"+
+        "Jika bukan bukti Transfer : Stop|Bukan bukti transfer"; 
+        document.getElementById('dev-col-23').value = "WA Biasa"; 
+        document.getElementById('dev-col-24').value = ""; 
+        
+        // Picu fungsi sembunyikan/tampilkan Prefix URL
+        togglePrefixUrlVisibility();
+        
+        document.getElementById('dev-modal').classList.remove('hidden');
+    }
+
+    // --- FUNGSI TOOLTIP KLIK ---
+    function showTooltip(title, text) {
+        document.getElementById('tooltip-title').innerText = title;
+        document.getElementById('tooltip-text').innerText = text;
+        document.getElementById('global-tooltip-modal').classList.remove('hidden');
+    }
+
+    function closeTooltip() {
+        document.getElementById('global-tooltip-modal').classList.add('hidden');
+    }
+
+    function editDevForm(idx) {
+        const dev = deviceCache[idx];
+        const rowData = dev.fullRow; 
+        if(!rowData) return;
+        
+        document.getElementById('dev-title').innerText = "Edit Pengaturan Device";
+        document.getElementById('dev-index').value = idx;
+        
+        // MUNCULKAN KOTAK WEBHOOK
+        if(document.getElementById('webhook-container')) document.getElementById('webhook-container').classList.remove('hidden');
+
+        const setVal = (id, val) => { if(document.getElementById(id)) document.getElementById(id).value = val; };
+
+        setVal('dev-col-0', rowData[0] || ""); 
+        setVal('dev-col-1', rowData[1] || ""); 
+        setVal('dev-col-2', rowData[2] || "ON"); 
+        setVal('dev-col-4', rowData[4] || ""); // <--- Ini membaca Kolom E (Auto Label) (Index 4)
+        setVal('dev-col-6', rowData[6] || ""); 
+        setVal('dev-col-7', rowData[7] || ""); 
+        setVal('dev-col-8', rowData[8] || ""); 
+        setVal('dev-col-9', rowData[9] || ""); 
+        setVal('dev-col-10', rowData[10] || ""); 
+        setVal('dev-col-11', rowData[11] || "ON"); 
+        setVal('dev-col-12', rowData[12] || ""); 
+        setVal('dev-col-13', rowData[13] || ""); // <--- Kolom N (Sekarang kosong, biarkan saja)
+        setVal('dev-col-23', rowData[23] || "WA Biasa"); 
+        setVal('dev-col-24', parseDateForInput(rowData[24])); 
+        setVal('dev-col-25', rowData[25] || ""); // <--- Ini membaca Kolom Z (Set Rasio)
+        
+        togglePrefixUrlVisibility();
+        
+        // MUNCULKAN DULU MODALNYA
+        document.getElementById('dev-modal').classList.remove('hidden');
+        
+        // SETELAH MODAL MUNCUL, KALKULASI TINGGI TEXTAREA
+        const textareasToResize = ['dev-col-12', 'dev-col-13'];
+        
+        textareasToResize.forEach(id => {
+            const el = document.getElementById(id);
+            if(el) {
+                el.style.height = 'auto';
+                el.style.height = el.scrollHeight + 'px';
+            }
+        });
+     }
+
+   function saveDevData() {
+        const idx = document.getElementById('dev-index').value;
+        const btn = document.getElementById('btn-save-dev');
+        
+        // HELPER PENGAMAN: Jika input HTML dihapus/tidak ada, kembalikan string kosong tanpa Eror Crash
+        const getVal = (id) => {
+            const el = document.getElementById(id);
+            return el ? el.value.trim() : "";
+        };
+
+        // 1. AMBIL NILAI VALIDASI DENGAN AMAN
+        const col0Val = getVal('dev-col-0'); // Device Name
+        const col1Val = getVal('dev-col-1'); // Akun CS
+        const col6Val = getVal('dev-col-6'); // No Server
+        
+        // 2. LOGIKA VALIDASI KETAT
+        if (col0Val === "") { showToast("⚠️ Device Name (A) tidak boleh kosong!"); return; }
+        if (col1Val === "") { showToast("⚠️ Akun CS (B) tidak boleh kosong!"); return; }
+        if (col6Val === "") { showToast("⚠️ No Server (G) tidak boleh kosong!"); return; }
+
+        btn.innerText = "Menyimpan..."; 
+        btn.disabled = true;
+
+        const rawDate = getVal('dev-col-24');
+        const formattedDate = formatDateForSheet(rawDate);
+
+        // 3. KUMPULKAN DATA DENGAN AMAN (Anti-Crash)
+        const dataObj = {
+            col0: col0Val,
+            col1: col1Val,
+            col2: getVal('dev-col-2'),
+            col4: getVal('dev-col-4'), // <--- Ini akan menjadi Auto Label di Kolom E
+            col6: col6Val,
+            col7: getVal('dev-col-7'),
+            col8: getVal('dev-col-8'),
+            col9: getVal('dev-col-9'),
+            col10: getVal('dev-col-10'),
+            col11: getVal('dev-col-11'),
+            col12: getVal('dev-col-12'),
+            col13: getVal('dev-col-13'), // <--- Kolom N promt vision
+            col23: getVal('dev-col-23'),
+            col24: formattedDate,
+            col25: getVal('dev-col-25') // <--- Set Rasio di Kolom Z
+        };
+        
+        // 4. KIRIM KE BACKEND MASTER
+        google.script.run
+            .withFailureHandler(function(err) {
+                showToast("❌ Eror Server: " + err.message);
+                btn.innerText = "Simpan Semua Perubahan"; 
+                btn.disabled = false; 
+            })
+            .withSuccessHandler(function(res) { 
+                showToast(res); closeDevForm(); openControlPanel(); 
+                btn.innerText = "Simpan Semua Perubahan"; 
+                btn.disabled = false; 
+            })
+            .saveDeviceDataNative(SHEET_URL, idx, dataObj);
+    }
+
+   
+    function closeDevForm() { document.getElementById('dev-modal').classList.add('hidden'); }
+
+    function deleteDev(idx) {
+        if(!confirm("Yakin ingin menghapus device ini permanen?")) return;
+        google.script.run.withSuccessHandler(function(res) { showToast(res); openControlPanel(); }).deleteDeviceFromUI(SHEET_URL, idx);
+    }
+
+    function deleteProfile() {
+        if (!currentContactId) return;
+        
+        // Meminta konfirmasi sebelum menghapus
+        if (!confirm("⚠️ Yakin ingin menghapus profil/kontak ini secara permanen? Data yang dihapus tidak bisa dikembalikan.")) {
+            return;
+        }
+
+        const btn = document.getElementById('btn-save-profile');
+        if (btn) {
+            btn.innerText = "Menghapus...";
+            btn.disabled = true;
+            btn.classList.add('opacity-70');
+        }
+
+        // Panggil fungsi di Google Apps Script (Backend)
+        google.script.run
+            .withSuccessHandler(function(status) {
+                if (status === "success") {
+                    // Hapus data secara lokal dari allData
+                    allData = allData.filter(r => r[1] !== currentContactId);
+                    
+                    // Tutup modal dan reset tampilan chat
+                    document.getElementById('edit-modal').classList.add('hidden');
+                    closeChat();
+                    renderSidebar();
+                    
+                    showToast("✅ Profil berhasil dihapus!");
+                } else {
+                    showToast("❌ Gagal menghapus profil dari Database.");
+                }
+                
+                if (btn) {
+                    btn.innerText = "Simpan";
+                    btn.disabled = false;
+                    btn.classList.remove('opacity-70');
+                }
+            })
+            .withFailureHandler(function(e) {
+                showToast("❌ Error koneksi saat menghapus.");
+                if (btn) {
+                    btn.innerText = "Simpan";
+                    btn.disabled = false;
+                    btn.classList.remove('opacity-70');
+                }
+            })
+            .deleteContactData(SHEET_URL, currentContactId); // Fungsi pemanggil backend
+    }
+
+// ===== UBAH FUNGSI fetchData() AGAR MENGIRIM ROLE KE SERVER =====
+    function fetchData() {
+        if (!SHEET_URL) return;
+        if (searchTerm !== "") return; 
+        
+        const status = document.getElementById('sync-status');
+        if(status) status.innerText = "Sinkronisasi...";
+        
+        google.script.run
+        .withSuccessHandler(function(data) {
+            // PENGAMAN 1: Cek apakah data dari Google Sheet korup/kosong
+            if (!data || !Array.isArray(data)) {
+                if(status) status.innerText = "Gagal memuat data (Data tidak valid).";
+                document.getElementById('contact-list').innerHTML = '<div class="p-8 text-center text-red-400 text-xs italic">Koneksi API / Data Master bermasalah.</div>';
+                return;
+            }
+
+            allData = data.filter(row => {
+                const id = String(row[1] || "").trim();
+                if (id === "" || id === 'Unique ID') return false;
+                
+                // (Server sudah melakukan filtering, tapi kita simpan safety check ini)
+                if (!isMasterAdmin) {
+                    const akunChat = String(row[0] || "").trim();
+                    if (!userAllowedAccounts.includes(akunChat)) return false;
+                }
+                return true;
+            });
+
+            updateDeviceFilter(); updateLabelFilter(); renderSidebar();
+            if (currentContactId) refreshChat();
+            if(status) status.innerText = "Terakhir: " + new Date().toLocaleTimeString();
+        })
+        .withFailureHandler(function(error) {
+            if(status) status.innerText = "Gagal Sinkronisasi: Timeout/Error";
+            document.getElementById('contact-list').innerHTML = '<div class="p-8 text-center text-red-400 text-xs italic">Gagal terhubung ke Server Master.</div>';
+        })
+        // BARU: Kirimkan array role admin (dijadikan string) saat meminta data
+        .getSheetData(SHEET_URL, (userAllowedAccounts || []).join(','));
+    }
+
+    // ===== FUNGSI SERVER SIDE SEARCH DENGAN ANIMASI LOADING =====
+    function handleServerSearch(e) {
+        if (e.key === 'Enter') {
+            const kw = document.getElementById('search-input').value.trim();
+            if (kw.length < 3) {
+                showToast("Ketik minimal 3 huruf untuk mencari di Database.");
+                return;
+            }
+            
+            const syncStatus = document.getElementById('sync-status');
+            const searchSpinner = document.getElementById('search-spinner');
+            
+            // Tampilkan animasi loading
+            if (searchSpinner) searchSpinner.classList.remove('hidden');
+            if (syncStatus) syncStatus.innerText = "Mencari di seluruh Database 2000+ data...";
+            
+            google.script.run
+            .withSuccessHandler(function(data) {
+                // Matikan animasi loading setelah sukses
+                if (searchSpinner) searchSpinner.classList.add('hidden');
+                
+                if(data && data.length > 1) { 
+                    const newRows = data.filter(row => {
+                        const id = String(row[1] || "").trim();
+                        return id !== "" && id !== 'Unique ID';
+                    });
+                    
+                    newRows.forEach(newRow => {
+                        const existingIndex = allData.findIndex(r => r[1] === newRow[1]);
+                        if (existingIndex > -1) {
+                            allData[existingIndex] = newRow; 
+                        } else {
+                            allData.push(newRow); 
+                        }
+                    });
+                    
+                    updateDeviceFilter(); updateLabelFilter(); renderSidebar();
+                    if (syncStatus) syncStatus.innerText = `Ditemukan ${newRows.length} kontak lama!`;
+                    showToast(`Berhasil menarik ${newRows.length} data dari Database.`);
+                } else {
+                    if (syncStatus) syncStatus.innerText = "Kontak tidak ditemukan di Database.";
+                    showToast("Pencarian tidak ditemukan.");
+                }
+            })
+            .withFailureHandler(function(e) {
+                // Matikan animasi loading jika gagal
+                if (searchSpinner) searchSpinner.classList.add('hidden');
+                if (syncStatus) syncStatus.innerText = "Gagal mencari di server.";
+                showToast("❌ Server Eror saat mencari.");
+            })
+            .searchContactNative(SHEET_URL, kw);
+        }
+    }
+
+    // --- FUNGSI MENGAMBIL SISA TOKEN AI DARI SPREADSHEET & NOTIFIKASI EROR ---
+    function fetchAIToken() {
+        if (!SHEET_URL) return;
+        google.script.run
+            .withSuccessHandler(function(tokenStr) {
+                const display = document.getElementById('ai-token-display');
+                const badge = document.getElementById('notif-badge');
+                const notifList = document.getElementById('notif-list');
+
+                if(tokenStr) {
+                    // Memecah data berdasarkan tanda "~"
+                    const parts = tokenStr.split('~');
+                    
+                    // Elemen [0] adalah Token Utama
+                    display.innerText = parts[0].trim() || "Info Token Kosong";
+
+                    // Elemen [1] dst adalah Notifikasi Eror
+                    const notifs = parts.slice(1);
+                    if (notifs.length > 0) {
+                        badge.innerText = notifs.length;
+                        badge.classList.remove('hidden');
+
+                        // Bangun daftar list notifikasi
+                        notifList.innerHTML = '';
+                        notifs.forEach(notif => {
+                            const cleanNotif = notif.trim();
+                            if(cleanNotif === "") return;
+                            
+                            // Amankan teks dari kutip agar tidak merusak atribut HTML saat dicopy
+                            const safeText = cleanNotif.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+                            
+                            notifList.innerHTML += `
+                                <div class="bg-white p-2.5 rounded-lg border border-gray-200 shadow-sm relative group hover:border-red-300 transition-colors">
+                                    <p class="text-[10px] text-gray-700 whitespace-pre-wrap pr-6 line-clamp-3 group-hover:line-clamp-none transition-all">${cleanNotif}</p>
+                                    <button onclick="copyNotifData(this)" data-text="${safeText}" class="absolute top-2 right-2 text-gray-400 hover:text-blue-600 bg-gray-50 hover:bg-blue-50 rounded shadow-sm p-1.5 opacity-0 group-hover:opacity-100 transition-all" title="Copy Log Eror">
+                                        <svg width="12" height="12" fill="currentColor" viewBox="0 0 16 16"><path d="M4 1.5H3a2 2 0 0 0-2 2V14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V3.5a2 2 0 0 0-2-2h-1v1h1a1 1 0 0 1 1 1V14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1h1v-1z"/><path d="M9.5 1h-3a.5.5 0 0 0-.5.5v1a.5.5 0 0 0 .5.5h3a.5.5 0 0 0 .5-.5v-1a.5.5 0 0 0-.5-.5z"/></svg>
+                                    </button>
+                                </div>
+                            `;
+                        });
+                    } else {
+                        badge.classList.add('hidden');
+                        notifList.innerHTML = '<p class="text-[10px] text-gray-400 text-center py-4">Tidak ada notifikasi eror.</p>';
+                    }
+                } else {
+                    display.innerText = "Info Token Kosong";
+                    document.getElementById('notif-badge').classList.add('hidden');
+                }
+            })
+            .withFailureHandler(function(error) {
+                document.getElementById('ai-token-display').innerText = "Gagal memuat token";
+            })
+            .getAITokenStatus(SHEET_URL);
+    }
+
+    function copyNotifData(btn) {
+        const text = btn.getAttribute('data-text');
+        navigator.clipboard.writeText(text).then(() => {
+            showToast("Log disalin ke keyboard!");
+            const originalIcon = btn.innerHTML;
+            btn.innerHTML = `<svg width="12" height="12" class="text-green-600" fill="currentColor" viewBox="0 0 16 16"><path d="M10.97 4.97a.75.75 0 0 1 1.07 1.05l-3.99 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 0 1 .02-.022z"/></svg>`;
+            setTimeout(() => btn.innerHTML = originalIcon, 2000);
+        });
+    }
+
+function getAvatarColorClass(isMe, waLabel) {
+        const labelsArray = (waLabel || "").toUpperCase().split(',').map(l => l.trim());
+        if (labelsArray.includes("XX")) return "bg-black text-white";
+        if (!isMe && labelsArray.includes("AE")) return "bg-amber-400 text-amber-900";
+        if (!isMe) return "bg-red-500 text-white";
+        return "bg-green-500 text-white";
+    }
+
+    // --- FUNGSI BANTUAN BARU: Mengekstrak nama device dengan aman ---
+    function getDeviceNameFromId(id) {
+        if (!id) return "Default";
+        let parts = String(id).split('.');
+        if (parts.length > 1) {
+            parts.shift(); // Buang nomor HP di depan
+            return parts.join('.').trim(); // Gabungkan sisa namanya (Berjaga jika nama device pakai tanda titik)
+        }
+        return "Default";
+    }
+
+// 1. TIMPA FUNGSI getDeviceStats
+    function getDeviceStats(deviceName) {
+        const contactIds = new Set();
+        let alertCount = 0;
+        let deviceTotalDb = "0"; 
+        let koneksiStatus = ""; 
+        let isDeviceUnknown = true; // Default true
+        let isApiKeyEmpty = true; // Default true untuk cek API Key
+        
+        const contactMap = new Map();
+        
+        allData.forEach(row => {
+            const id = row[1]; 
+            if (!contactMap.has(id)) {
+                const labelWA = String(row[2] || "");
+                const isUnsubAI = labelWA.replace(/\s+/g, '').toUpperCase().includes("UNSUBAI");
+                const rawVal = row[25]; 
+                const isUnread = rawVal === true || String(rawVal).toLowerCase().trim() === "true" || String(rawVal).toLowerCase().trim() === "benar";
+                
+                contactMap.set(id, {
+                    device: String(row[3] || "Default").trim(), 
+                    isMe: String(row[13]).toLowerCase().trim() === "true",
+                    waLabel: labelWA.trim(),
+                    unsub: isUnsubAI,
+                    isUnread: isUnread
+                });
+            }
+        });
+        
+        contactMap.forEach((c, id) => {
+            const matchDevice = (deviceName === "Semua" || c.device === deviceName);
+            const matchUnsub = !filterUnsubOnly || c.unsub;
+            const matchBelumBalas = !filterBelumBalasOnly || !c.isMe;
+            const matchUnread = !filterUnreadOnly || c.isUnread;
+            if (matchDevice && matchUnsub && matchBelumBalas && matchUnread) {
+                contactIds.add(id);
+                const labelsArray = (c.waLabel || "").toUpperCase().split(',').map(l => l.trim());
+                if (!c.isMe && !labelsArray.includes('AE')) alertCount++;
+            }
+        });
+        
+        if (deviceName !== "Semua") {
+            const devSetting = deviceCache.find(d => String(d.providerId).trim() === deviceName);
+            if (devSetting && devSetting.fullRow) {
+                isDeviceUnknown = false;
+                deviceTotalDb = String(devSetting.fullRow[22] || "0").trim(); // Kolom W (DB Kontak)
+                koneksiStatus = String(devSetting.fullRow[15] || "").toLowerCase().trim(); // Kolom P (Status API)
+                
+                // Cek API Key di Kolom I (Index 8)
+                const apiKey = String(devSetting.fullRow[8] || "").trim();
+                if (apiKey !== "") {
+                    isApiKeyEmpty = false;
+                }
+            }
+        } else {
+            isDeviceUnknown = false;
+        }
+        
+        return { 
+            count: contactIds.size, 
+            alerts: alertCount, 
+            totalDb: deviceTotalDb,
+            statusApi: koneksiStatus,
+            isUnknown: isDeviceUnknown,
+            isKeyEmpty: isApiKeyEmpty
+        };
+    }
+
+    // 2. TIMPA FUNGSI updateDeviceFilter
+    function updateDeviceFilter() {
+        const select = document.getElementById('device-select');
+        const devices = new Set();
+        
+        allData.forEach(row => {
+            const device = String(row[3] || "").trim(); 
+            if (device && device.toLowerCase() !== 'default') devices.add(device);
+        });
+        
+        const sortedDevices = Array.from(devices).sort();
+        const oldVal = select.value;
+        const statsSemua = getDeviceStats("Semua");
+        
+        select.innerHTML = `<option value="Semua">Semua Perangkat (${statsSemua.count})</option>`;
+        
+        sortedDevices.forEach(dev => {
+            const stats = getDeviceStats(dev);
+            const opt = document.createElement('option');
+            opt.value = dev;
+            
+            let colorCircle = '⚫'; // Default Hitam
+            
+            if (!stats.isUnknown) {
+                if (stats.isKeyEmpty) {
+                    colorCircle = '⚫'; // Hitam jika API Key kosong
+                } else if (stats.statusApi.includes('terkoneksi')) {
+                    colorCircle = '🟢'; // Hijau jika Terkoneksi
+                } else if (stats.statusApi.includes('terputus') || stats.statusApi !== "") {
+                    colorCircle = '🔴'; // Merah jika Terputus
+                }
+            }
+            
+            opt.innerText = `${colorCircle} ${dev} (${stats.count}/${stats.totalDb})`;
+            select.appendChild(opt);
+        });
+        
+        if (Array.from(select.options).some(o => o.value === oldVal)) {
+            select.value = oldVal;
+        }
+    }
+    
+    // 3. TIMPA FUNGSI updateLabelFilter
+    function updateLabelFilter() {
+        const select = document.getElementById('label-select');
+        const labels = new Map();
+        const contactMap = new Map();
+        
+        allData.forEach(row => {
+            const id = row[1];
+            if (!contactMap.has(id)) {
+                const history = (row[19] || "").split(/(?:^|\n)_\n/).filter(m => m.trim());
+                const lastMsg = history.length > 0 ? history[history.length - 1] : "";
+                
+                const labelWA = String(row[2] || "");
+                const isUnsubAI = labelWA.replace(/\s+/g, '').toUpperCase().includes("UNSUBAI");
+                const rawVal = row[25];
+                const isUnread = rawVal === true || String(rawVal).toLowerCase().trim() === "true" || String(rawVal).toLowerCase().trim() === "benar";
+
+                contactMap.set(id, {
+                    // PERBAIKAN: Langsung tembak Kolom D (Index 3)
+                    device: String(row[3] || "Default").trim(),
+                    isMe: String(row[13]).toLowerCase().trim() === "true",
+                    waLabel: labelWA.trim(),
+                    unsub: isUnsubAI, 
+                    isUnread: isUnread 
+                });
+            }
+        });
+
+        contactMap.forEach(c => {
+            const matchDevice = (selectedDevice === "Semua" || c.device === selectedDevice);
+            const matchUnsub = !filterUnsubOnly || c.unsub;
+            const matchBelumBalas = !filterBelumBalasOnly || !c.isMe;
+            const matchPending = !filterPendingOnly || c.isPending;
+            if (c.waLabel && matchDevice && matchUnsub && matchBelumBalas && matchPending) {
+                const splitLabels = c.waLabel.split(',').map(l => l.trim()).filter(l => l !== "");
+                splitLabels.forEach(label => {
+                    labels.set(label, (labels.get(label) || 0) + 1);
+                });
+            }
+        });
+        
+        const oldVal = select.value;
+        let total = 0; labels.forEach(c => total += c);
+        select.innerHTML = `<option value="Semua">Semua Label (${total})</option>`;
+        Array.from(labels.keys()).sort().forEach(l => {
+            const opt = document.createElement('option');
+            opt.value = l; opt.innerText = `${l} (${labels.get(l)})`;
+            select.appendChild(opt);
+        });
+        if (Array.from(select.options).some(o => o.value === oldVal)) select.value = oldVal;
+    }
+
+    // 4. TIMPA FUNGSI renderSidebar
+    function renderSidebar() {
+        const contactList = document.getElementById('contact-list');
+        const contactMap = new Map();
+        
+        function parseTime(t) {
+            if (!t) return 0;
+            const indoDateMatch = t.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+            if (indoDateMatch) {
+                const validFormat = t.replace(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/, '$2/$1/$3');
+                return new Date(validFormat).getTime() || 0;
+            }
+            return new Date(t).getTime() || 0;
+        }
+
+        allData.forEach(row => {
+            const id = row[1];
+            if (!contactMap.has(id)) {
+                const history = (row[19] || "").split(/(?:^|\n)_\n/).filter(m => m.trim());
+                const lastMsgRaw = history.length > 0 ? history[history.length - 1] : "...";
+                const lastLines = lastMsgRaw.split('\n');
+                
+                const labelWA = String(row[2] || "");
+                const isUnsubAI = labelWA.replace(/\s+/g, '').toUpperCase().includes("UNSUBAI");
+                const rawVal = row[25];
+                const isUnread = rawVal === true || String(rawVal).toLowerCase().trim() === "true" || String(rawVal).toLowerCase().trim() === "benar";
+
+                const timeP = row[15] || ""; 
+                const timeQ = row[16] || ""; 
+                
+                const parsedP = parseTime(timeP);
+                const parsedQ = parseTime(timeQ);
+                
+                const maxTimeVal = Math.max(parsedP, parsedQ);
+                const displayTime = maxTimeVal === parsedP ? timeP : timeQ;
+
+                contactMap.set(id, {
+                    id: id, 
+                    name: row[7] || id,
+                    isMe: String(row[13]).toLowerCase().trim() === "true",
+                    time: displayTime, 
+                    timeVal: maxTimeVal, 
+                    waLabel: labelWA,
+                    unsub: isUnsubAI, 
+                    // PERBAIKAN: Langsung tembak Kolom D (Index 3)
+                    device: String(row[3] || "Default").trim(), 
+                    lastMsg: lastLines.length > 1 ? lastLines.slice(1).join(' ').trim() : lastMsgRaw,
+                    isUnread: isUnread
+                });
+            }
+        });
+        
+        const contacts = Array.from(contactMap.values()).filter(c => {
+            const matchSearch = c.name.toLowerCase().includes(searchTerm) || c.id.toLowerCase().includes(searchTerm);
+            const matchDevice = selectedDevice === "Semua" || c.device === selectedDevice;
+            const labelArray = c.waLabel.split(',').map(l => l.trim());
+            const matchLabel = selectedLabel === "Semua" || labelArray.includes(selectedLabel);
+            
+            return matchSearch && matchDevice && matchLabel && (!filterUnsubOnly || c.unsub) && (!filterBelumBalasOnly || !c.isMe) && (!filterUnreadOnly || c.isUnread);
+        });
+        
+        contacts.sort((a, b) => b.timeVal - a.timeVal);
+        
+        contactList.innerHTML = "";
+        if (contacts.length === 0) {
+            contactList.innerHTML = '<div class="p-8 text-center text-gray-400 text-xs italic">Tidak ada kontak.</div>';
+            return;
+        }
+        
+        contacts.forEach(c => {
+            let bgClass = currentContactId === c.id ? 'bg-gray-100' : '';
+            if (!bgClass) {
+                bgClass = c.unsub ? 'bg-red-50/40' : (c.isUnread ? 'bg-blue-50/30' : '');
+            }
+            
+            const div = document.createElement('div');
+            div.className = `contact-item p-3 flex gap-3 items-center ${bgClass}`;
+            div.onclick = () => selectContact(c);
+            
+            let labelsHtml = '';
+            if (c.waLabel) {
+                const labels = c.waLabel.split(',').map(l => l.trim()).filter(l => l !== "");
+                labelsHtml = labels.map(l => {
+                    if (l.replace(/\s+/g, '').toUpperCase() === 'UNSUBAI') return '';
+                    return `<span class="badge-wa">${l}</span>`;
+                }).join(' ');
+            }
+
+            const unreadMarker = c.isUnread ? `<span class="w-2.5 h-2.5 bg-blue-500 rounded-full inline-block shadow-sm"></span>` : '';
+            const nameWeight = c.isUnread ? 'font-black text-black' : 'font-bold text-gray-800';
+            const msgWeight = c.isUnread ? 'font-bold text-gray-800' : 'text-gray-500';
+            const timeColor = c.isUnread ? 'text-blue-500 font-bold' : 'text-gray-400';
+
+            div.innerHTML = `
+                <div class="w-12 h-12 rounded-full flex-shrink-0 flex items-center justify-center font-bold shadow-sm ${getAvatarColorClass(c.isMe, c.waLabel)}">
+                    ${c.name.charAt(0).toUpperCase()}
+                </div>
+                <div class="flex-1 min-w-0 border-b border-gray-50 pb-2 h-full">
+                    <div class="flex justify-between items-center">
+                        <h3 class="text-sm truncate ${nameWeight}">${c.name}</h3>
+                        <div class="flex items-center gap-1.5">
+                            ${unreadMarker}
+<span class="text-[10px] ${timeColor}"> ${c.time ? (c.time.length > 16 ? c.time.substring(0, 16) : c.time) : ''} <span>
+                        </div>
+                    </div>
+                    <p class="text-[11px] truncate mt-0.5 ${c.isPending ? 'text-red-500 font-bold' : msgWeight}">${c.lastMsg}</p>
+                    <div class="flex gap-1 mt-1 flex-wrap">
+                        <span class="text-[8px] bg-gray-100 px-1 rounded text-gray-500 uppercase">${c.device}</span>
+                        ${labelsHtml}
+                        ${c.unsub ? '<span class="badge-unsub-ai">UNSUB AI</span>' : ''}
+                        ${c.isPending ? '<span class="text-[8px] bg-red-100 text-red-600 px-1 rounded font-bold">PENDING</span>' : ''}
+                    </div>
+                </div>
+            `;
+            contactList.appendChild(div);
+        });
+    }
+    
+    function handleDeviceChange() { selectedDevice = document.getElementById('device-select').value; updateLabelFilter(); renderSidebar(); }
+    function handleLabelChange() { selectedLabel = document.getElementById('label-select').value; renderSidebar(); }
+    function handleUnsubFilterChange() { filterUnsubOnly = document.getElementById('unsub-filter').checked; updateDeviceFilter(); updateLabelFilter(); renderSidebar(); }
+    function handleBelumBalasFilterChange() { filterBelumBalasOnly = document.getElementById('belum-balas-filter').checked; updateDeviceFilter(); updateLabelFilter(); renderSidebar(); }
+    let filterUnreadOnly = false;
+    function handleUnreadFilterChange() { 
+    filterUnreadOnly = document.getElementById('unread-filter').checked; 
+    updateDeviceFilter(); 
+    updateLabelFilter(); 
+    renderSidebar(); 
+    }
+
+    function isImageUrl(url) {
+        if (url.includes('oneapi.my.id/download/v')) return true;
+        // TAMBAHKAN BARIS INI: Jika link mengandung "drive.google.com/file/d/", anggap itu gambar
+        if (url.includes('drive.google.com/file/d/')) return true;
+        if (url.includes('drive.google.com/uc?')) return true;
+        const imageExtensions = /\.(jpg|jpeg|png|gif|webp|bmp|svg)(\?.*)?$/i;
+        return imageExtensions.test(url);
+    }
+
+    // MODIFIKASI: Konversi Link Drive menggunakan jalur Thumbnail API
+function getEmbeddableImageUrl(url) {
+        // TAMBAHAN BARU: Regex ini sekarang bisa menangkap ID dari format /file/d/ MAUPUN /uc?id=
+        const gDriveRegex = /drive\.google\.com\/(?:file\/d\/|uc\?.*?id=)([a-zA-Z0-9_-]+)/;
+        const match = url.match(gDriveRegex);
+        
+        if (match) {
+            // Mengubahnya menjadi link Thumbnail agar tidak diblokir Google
+            return `https://drive.google.com/thumbnail?id=${match[1]}&sz=w800`;
+        }
+        return url;
+    }
+
+  function formatMessageContent(text) {
+        if (!text) return "";
+        
+        // Bersihkan teks "Gambar Disimpan :" dari raw text agar ter-hidden
+        let processedText = text.replace(/\[Gambar Disimpan\s*:\s*(https?:\/\/[^\s\]]+)\]/gi, '$1');
+
+        // Regex mencari link
+        const urlRegex = /(https?:\/\/[^\s]+)/g; 
+        
+        return processedText.replace(urlRegex, function(url) {
+            if (isImageUrl(url)) {
+                // Konversi URL Drive
+                const imgSrc = getEmbeddableImageUrl(url);
+                
+                // HANYA render gambar, tombol link sudah dipindah ke header
+                return `
+                    <div class="chat-image-container">
+                        <img src="${imgSrc}" class="chat-image" 
+                             onerror="this.style.display='none'; this.parentElement.style.display='none';" 
+                             onclick="openImageModal('${imgSrc}')"
+                             alt="Gambar" loading="lazy">
+                    </div>
+                `;
+            }
+            // Tampilan link biasa untuk non-gambar
+            return `<a href="${url}" target="_blank" class="chat-link">${url}</a>`;
+        });
+    }
+
+    
+    function handleSearch() { 
+        searchTerm = document.getElementById('search-input').value.toLowerCase(); 
+        
+        // Pastikan spinner mati jika teks dikosongkan secara manual
+        if (searchTerm === "") {
+            const searchSpinner = document.getElementById('search-spinner');
+            if (searchSpinner) searchSpinner.classList.add('hidden');
+        }
+        
+        renderSidebar(); 
+    }
+
+    function selectContact(contact) {
+        currentContactId = contact.id;
+        document.getElementById('input-container').classList.remove('hidden');
+        document.getElementById('chat-name').innerText = contact.name;
+        document.getElementById('chat-id').innerText = `ID: ${contact.id}`;
+        const av = document.getElementById('chat-avatar');
+        av.innerText = contact.name.charAt(0).toUpperCase();
+        av.className = `w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg border border-white/20 ${getAvatarColorClass(contact.isMe, contact.waLabel)}`;
+        const badges = document.getElementById('chat-badges');
+        badges.innerHTML = (contact.waLabel ? `<span class="badge-wa !bg-white/20 !text-white border-none">${contact.waLabel}</span>` : '') + (contact.unsub ? `<span class="badge-unsub-ai !bg-red-500 !text-white border-white/40">UNSUB</span>` : '');
+        // 2. OTOMATIS TANDAI SEBAGAI SUDAH DIBACA DI DATABASE
+    if (contact.isUnread) {
+        // Update di tampilan lokal agar badge biru langsung hilang tanpa nunggu refresh
+        const rowIndex = allData.findIndex(r => r[1] === contact.id);
+        if (rowIndex > -1) {
+            allData[rowIndex][25] = false; 
+        }
+        
+        // Kirim perintah ke Google Sheet (Backend)
+        google.script.run
+            .withSuccessHandler(function(res) {
+                console.log("Status Unread diupdate ke Sheet:", res);
+                renderSidebar(); // Gambar ulang sidebar agar status 'Unread' hilang
+            })
+            .markAsRead(SHEET_URL, contact.id);
+    }
+        
+        refreshChat(); renderSidebar(); openChat();
+    }
+
+    function refreshChat() {
+        const content = document.getElementById('chat-content');
+        const rows = allData.filter(r => r[1] === currentContactId);
+        content.innerHTML = "";
+        
+        rows.forEach(row => {
+            const history = (row[19] || "").split(/(?:^|\n)_\n/).filter(m => m.trim());
+            history.forEach(m => {
+                const lines = m.split('\n');
+                if (lines.length < 1) return;
+                
+                const bodyText = lines.slice(1).join('\n').trim();
+                const type = bodyText.toLowerCase().includes('admin :') ? 'admin' : 'user';
+                const cleanBody = bodyText.replace(/(admin|user)\s*:\s*/i, "").trim();
+                
+                // --- TAMBAHAN BARU: JIKA PESAN KOSONG, LEWATI (JANGAN DIBUAT BUBBLE-NYA) ---
+                if (cleanBody === "") return;
+                // --------------------------------------------------------------------------
+
+                const isPending = cleanBody.includes("[PENDING]");
+                const bubble = document.createElement('div');
+                bubble.className = `message-bubble ${type === 'admin' ? 'bubble-admin' : 'bubble-user'} ${isPending ? 'border-2 border-red-500 animate-pulse' : ''}`;
+                
+                // Bersihkan text dari tag bracket sebelum dicopy
+                const textToCopy = cleanBody.replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/\[Gambar Disimpan\s*:\s*(https?:\/\/[^\s\]]+)\]/gi, '$1');
+
+                // Ekstrak URL Gambar untuk ditaruh di header
+                let imageLinkHtml = '';
+                const savedImgMatch = cleanBody.match(/\[Gambar Disimpan\s*:\s*(https?:\/\/[^\s\]]+)\]/i);
+                
+                // ... (Sisa kode ke bawah biarkan sama persis seperti sebelumnya) ...
+                if (savedImgMatch) {
+                    // Jika format [Gambar Disimpan: url]
+                    imageLinkHtml = `<a href="${savedImgMatch[1]}" target="_blank" class="header-link-btn" title="Buka Link Asli Gambar"><svg width="15" height="15" fill="currentColor" viewBox="0 0 16 16"><path d="M4.715 6.542 3.343 7.914a3 3 0 1 0 4.243 4.243l1.828-1.829A3 3 0 0 0 8.586 5.5L8 6.086a1.002 1.002 0 0 0-.154.199 2 2 0 0 1 .861 3.337L6.88 11.45a2 2 0 1 1-2.83-2.83l.793-.792a4.018 4.018 0 0 1-.128-1.287z"/><path d="M6.586 4.672A3 3 0 0 0 7.414 9.5l.775-.776a2 2 0 0 1-.896-3.346L9.12 3.55a2 2 0 1 1 2.83 2.83l-.793.792c.112.42.155.855.128 1.287l1.372-1.372a3 3 0 1 0-4.243-4.243L6.586 4.672z"/></svg></a>`;
+                } else {
+                    // Cek jika ada URL gambar biasa
+                    const urlMatches = cleanBody.match(/(https?:\/\/[^\s]+)/g);
+                    if (urlMatches) {
+                        for (let url of urlMatches) {
+                            if (isImageUrl(url)) {
+                                imageLinkHtml = `<a href="${url}" target="_blank" class="header-link-btn" title="Buka Link Asli Gambar"><svg width="15" height="15" fill="currentColor" viewBox="0 0 16 16"><path d="M4.715 6.542 3.343 7.914a3 3 0 1 0 4.243 4.243l1.828-1.829A3 3 0 0 0 8.586 5.5L8 6.086a1.002 1.002 0 0 0-.154.199 2 2 0 0 1 .861 3.337L6.88 11.45a2 2 0 1 1-2.83-2.83l.793-.792a4.018 4.018 0 0 1-.128-1.287z"/><path d="M6.586 4.672A3 3 0 0 0 7.414 9.5l.775-.776a2 2 0 0 1-.896-3.346L9.12 3.55a2 2 0 1 1 2.83 2.83l-.793.792c.112.42.155.855.128 1.287l1.372-1.372a3 3 0 1 0-4.243-4.243L6.586 4.672z"/></svg></a>`;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                bubble.innerHTML = `
+                    <div class="msg-meta items-center flex justify-between">
+                        <div class="flex gap-2 items-center">
+                            <span class="msg-sender ${type === 'admin' ? 'sender-admin' : 'sender-user'}">
+                                ${type === 'admin' ? 'Admin' : 'User'} 
+                                ${isPending ? '<span class="text-red-600 font-black">⚠️ BELUM TERKIRIM</span>' : ''}
+                            </span>
+                            <span>${lines[0]}</span>
+                        </div>
+                        <div class="flex items-center gap-1">
+                            ${imageLinkHtml}
+                            <button onclick="copyMessage(this)" data-text="${textToCopy}" class="copy-btn" title="Salin Pesan">
+                                <svg class="copy-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="whitespace-pre-wrap text-[13.5px] ${isPending ? 'text-red-700 font-medium' : ''}">${formatMessageContent(cleanBody)}</div>
+                `;
+                content.appendChild(bubble);
+            });
+        });
+        const chatWin = document.getElementById('chat-window');
+        chatWin.scrollTo({ top: chatWin.scrollHeight });
+    }
+
+    // Variabel untuk menampung data file
+    let selectedFileData = null;
+
+    function handleFileSelect(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        // Tampilkan panel
+        document.getElementById('attachment-panel').classList.remove('hidden');
+        document.getElementById('file-name-display').innerText = file.name;
+        
+        // Cek apakah gambar atau dokumen untuk icon
+        const isImage = file.type.startsWith('image/');
+        document.getElementById('file-icon').innerText = isImage ? '🖼️' : '📄';
+
+        // Convert ke Base64
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            selectedFileData = {
+                base64: e.target.result, // Format: data:image/png;base64,iVBORw0KGgo...
+                name: file.name,
+                mimeType: file.type,
+                type: isImage ? 'image' : 'document'
+            };
+        };
+        reader.readAsDataURL(file);
+    }
+
+    function clearAttachment() {
+        document.getElementById('file-input').value = "";
+        selectedFileData = null;
+        document.getElementById('attachment-panel').classList.add('hidden');
+    }
+
+    function triggerSend() {
+        const input = document.getElementById('msg-input');
+        const btn = document.getElementById('send-btn');
+        const text = input.value.trim();
+        
+        // 1. Validasi
+        if ((!text && !selectedFileData) || !currentContactId || btn.disabled) return;
+        
+        const row = allData.find(r => r[1] === currentContactId);
+        const waNo = currentContactId.split('.')[0].replace(/\D/g, '');
+        
+        // --- PERBAIKAN FATAL INDEX ARRAY ---
+        // Sesuai dengan update getSheetData: apiKey dipindah ke r[31], apiUrl dipindah ke r[32]
+        const apiURLTarget = String(row[32] || "");
+        const apiKeyTarget = String(row[31] || "");
+        
+        const isStarsender = apiURLTarget.toLowerCase().includes('starsender');
+        
+        // 2. Tampilan Loading UI
+        btn.disabled = true; btn.classList.add('opacity-70');
+        document.getElementById('send-icon').classList.add('hidden');
+        document.getElementById('send-loading').classList.remove('hidden');
+        input.disabled = true;
+        
+        // 3. Susun Payload
+        let payload = {};
+        if (selectedFileData) {
+            if (isStarsender) {
+                payload = { "messageType": selectedFileData.type === "document" ? "document" : "media", "to": waNo, "body": text || " ", "file": "AKAN_DIISI_OLEH_GAS" };
+            } else {
+                const mediaType = selectedFileData.type === "document" ? "document" : "image";
+                payload = { "recipient_type": "individual", "to": waNo, "type": mediaType, [mediaType]: { "link": "AKAN_DIISI_OLEH_GAS", "caption": text } };
+            }
+        } else {
+            payload = isStarsender ? { "messageType": "text", "to": waNo, "body": text } : { "recipient_type": "individual", "to": waNo, "type": "text", "text": { "body": text } };
+        }
+        
+        // Data paket yang akan dikirim ke Backend
+        const requestData = { 
+            apiUrl: apiURLTarget, // <-- MENGGUNAKAN VARIABEL INDEX 9 YANG SUDAH DIPERBAIKI
+            apiKey: apiKeyTarget, // <-- MENGGUNAKAN VARIABEL INDEX 8 YANG SUDAH DIPERBAIKI
+            payload: payload,
+            fileData: selectedFileData,
+            uniqueId: currentContactId, 
+            sheetInput: SHEET_URL 
+        };
+        
+        // 4. EKSEKUSI NATIVE JALUR DALAM (Pengganti Fetch)
+        google.script.run
+            .withSuccessHandler(function(responseStr) {
+                const result = JSON.parse(responseStr);
+                if (result.status === "success") { 
+                    input.value = ""; 
+                    input.style.height = 'auto'; 
+                    clearAttachment(); 
+                    showToast("Pesan Terkirim!"); 
+                    setTimeout(fetchData, 2000); 
+                } else {
+                    showToast("Gagal: " + (result.message || ""));
+                }
+                resetBtn();
+            })
+            .withFailureHandler(function(error) {
+                showToast("Error Koneksi ke Server UI");
+                resetBtn();
+            })
+            .processUIPostNative(requestData);
+
+        // Fungsi pembantu kembalikan tombol
+        function resetBtn() {
+            btn.disabled = false; 
+            btn.classList.remove('opacity-70'); 
+            document.getElementById('send-icon').classList.remove('hidden'); 
+            document.getElementById('send-loading').classList.add('hidden'); 
+            input.disabled = false; 
+            input.focus(); 
+        }
+    }
+    
+    function showToast(msg) {
+        const t = document.createElement('div');
+        // Ubah z-[200] menjadi z-[10000] agar tampil di atas layar login
+        t.className = "fixed bottom-24 left-1/2 -translate-x-1/2 bg-gray-800 text-white px-5 py-2.5 rounded-full text-sm z-[10000] shadow-xl";
+        t.innerText = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 2500);
+    }
+
+    // --- FUNGSI COPY PESAN ---
+    function copyMessage(btn) {
+        const text = btn.getAttribute('data-text');
+        navigator.clipboard.writeText(text).then(() => {
+            showToast("Teks berhasil disalin!");
+            const originalIcon = btn.innerHTML;
+            // Ubah icon jadi centang hijau sebentar
+            btn.innerHTML = `<svg class="copy-icon text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>`;
+            setTimeout(() => btn.innerHTML = originalIcon, 2000);
+        }).catch(err => {
+            showToast("Gagal menyalin teks");
+        });
+    }
+
+    // --- FUNGSI MODAL GAMBAR FULLSCREEN ---
+    function openImageModal(src) {
+        const modal = document.getElementById('image-modal');
+        const modalImg = document.getElementById('image-modal-content');
+        modal.style.display = "block";
+        modalImg.src = src;
+    }
+
+    function closeImageModal() {
+        document.getElementById('image-modal').style.display = "none";
+    }
+
+    // Menutup gambar fullscreen jika pengguna mengklik area luar gambar
+    window.onclick = function(event) {
+        const modal = document.getElementById('image-modal');
+        if (event.target === modal) {
+            closeImageModal();
+        }
+    }
+
+    // --- FUNGSI MENAMBAHKAN TEKS/EMOJI ---
+    function addText(text) {
+        const input = document.getElementById('msg-input');
+        
+        // Tambahkan teks/emoji ke dalam textarea
+        input.value += text;
+        
+        // Kembalikan fokus ke textarea agar user bisa langsung lanjut mengetik
+        input.focus();
+        
+        // Pancing event 'input' agar textarea otomatis menyesuaikan tinggi (auto-resize)
+        input.dispatchEvent(new Event('input'));
+    }
+
+    // Variabel global untuk menampung label dari Setting F13
+    let masterLabelsList = [];
+
+    // Mengambil daftar label saat web pertama kali dimuat
+    function fetchMasterLabels() {
+        if (!SHEET_URL) return;
+        google.script.run
+            .withSuccessHandler(function(labelsString) {
+                // Memecah string "AE, ABC, SV" menjadi array
+                masterLabelsList = labelsString.split(',').map(l => l.trim()).filter(l => l !== "");
+            })
+            .getAvailableLabels(SHEET_URL);
+    }
+
+    // Panggil fungsi ini agar berjalan otomatis di background
+    setTimeout(fetchMasterLabels, 2000); 
+
+    // Fungsi membuka modal saat avatar diklik
+function openEditModal() {
+        if (!currentContactId) return;
+        const row = allData.find(r => r[1] === currentContactId);
+        if (!row) return;
+
+        // Isi field nama (row[7])
+        document.getElementById('edit-name-input').value = row[7] || "";
+        
+        // TAMBAHAN BARU: Isi field biodata (row[8])
+        document.getElementById('edit-biodata-input').value = row[8] || "";
+        
+        // Ambil label yang sedang aktif di kontak ini (row[2])
+        const currentLabels = (row[2] || "").toUpperCase().split(',').map(l => l.trim());
+
+        // Generate Checkbox Label (Kode tetap sama)
+        const container = document.getElementById('edit-labels-container');
+        container.innerHTML = "";
+        
+        if (masterLabelsList.length === 0) {
+            container.innerHTML = '<span class="text-xs text-red-400">Gagal memuat label / F13 Kosong. Refresh halaman.</span>';
+        } else {
+            masterLabelsList.forEach(label => {
+                const isChecked = currentLabels.includes(label.toUpperCase()) ? "checked" : "";
+                container.innerHTML += `
+                    <label class="flex items-center gap-2 text-sm cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors">
+                        <input type="checkbox" value="${label}" class="label-checkbox w-4 h-4 text-[#00a884] rounded border-gray-300 focus:ring-[#00a884]" ${isChecked}>
+                        <span class="text-gray-700 font-medium">${label}</span>
+                    </label>
+                `;
+            });
+        }
+        
+        document.getElementById('edit-modal').classList.remove('hidden');
+    }
+
+    // Fungsi menyimpan perubahan ke Sheet
+    function saveProfile() {
+        const btn = document.getElementById('btn-save-profile');
+        const newName = document.getElementById('edit-name-input').value.trim();
+        
+        // TAMBAHAN BARU: Tangkap isi Biodata
+        const newBiodata = document.getElementById('edit-biodata-input').value.trim();
+        
+        // Kumpulkan semua checkbox yang dicentang
+        const checkboxes = document.querySelectorAll('.label-checkbox:checked');
+        const newLabels = Array.from(checkboxes).map(cb => cb.value).join(', ');
+
+        btn.innerText = "Menyimpan...";
+        btn.disabled = true;
+        btn.classList.add('opacity-70');
+
+        google.script.run
+            .withSuccessHandler(function(status) {
+                if (status === "success") {
+                    // Update data lokal
+                    const rowIndex = allData.findIndex(r => r[1] === currentContactId);
+                    if (rowIndex > -1) {
+                        allData[rowIndex][7] = newName; // Update Nama
+                        allData[rowIndex][2] = newLabels; // Update Label
+                        allData[rowIndex][8] = newBiodata; // Update Biodata
+                    }
+                    
+                    document.getElementById('edit-modal').classList.add('hidden');
+                    
+                    // Refresh bagian Header Chat & Sidebar
+                    document.getElementById('chat-name').innerText = newName;
+                    const badges = document.getElementById('chat-badges');
+                    const isUnsub = newLabels.replace(/\s+/g, '').toUpperCase().includes("UNSUBAI");
+                    badges.innerHTML = (newLabels ? `<span class="badge-wa !bg-white/20 !text-white border-none">${newLabels}</span>` : '') + (isUnsub ? `<span class="badge-unsub-ai !bg-red-500 !text-white border-white/40">UNSUB AI</span>` : '');
+                    
+                    renderSidebar();
+                    showToast("Profil & Biodata berhasil diperbarui!");
+                } else {
+                    showToast("Gagal menyimpan data.");
+                }
+                btn.innerText = "Simpan";
+                btn.disabled = false;
+                btn.classList.remove('opacity-70');
+            })
+            .withFailureHandler(function(e) {
+                showToast("Error koneksi saat menyimpan.");
+                btn.innerText = "Simpan";
+                btn.disabled = false;
+                btn.classList.remove('opacity-70');
+            })
+            // PASTIKAN menambahkan newBiodata di baris terakhir ini
+            .updateContactData(SHEET_URL, currentContactId, newName, newLabels, newBiodata);
+    }
+
+    // --- FUNGSI TOGGLE PESAN STATIS ---
+    function togglePesanStatis() {
+        const statusB20 = document.getElementById('send-3').value;
+        const wrapperB21 = document.getElementById('wrapper-send-4');
+        
+        // Jika value mengandung kata "Aktif" (mengabaikan huruf besar/kecil)
+        if (statusB20 && statusB20.toLowerCase().trim() === 'aktif') {
+            wrapperB21.classList.remove('hidden');
+        } else {
+            wrapperB21.classList.add('hidden');
+        }
+    }
+
+// --- FUNGSI BARU: TARIK DATA DEVICE DI BACKGROUND ---
+    function fetchSilentDeviceCache() {
+        if (!SHEET_URL) return;
+        google.script.run
+            .withSuccessHandler(function(data) {
+                if (data && data.devices) {
+                    let rawDevices = data.devices || []; 
+                    if (typeof isMasterAdmin !== 'undefined' && !isMasterAdmin && typeof userAllowedAccounts !== 'undefined') {
+                        deviceCache = rawDevices.filter(d => {
+                            let akunDevice = String(d.fullRow[1] || "").trim();
+                            return userAllowedAccounts.includes(akunDevice);
+                        });
+                    } else {
+                        deviceCache = rawDevices;
+                    }
+                    updateDeviceFilter(); // Update seketika agar (17/0) berubah jadi data asli
+                }
+            })
+            .getSettingsForUI(SHEET_URL);
+    }
+
+</script>
+
+<div id="image-modal">
+    <span class="close-modal" onclick="closeImageModal()">&times;</span>
+    <img id="image-modal-content">
+</div>
+
+<div id="edit-modal" class="fixed inset-0 bg-black/60 flex items-center justify-center p-6 z-[200] hidden backdrop-blur-sm">
+    <div class="bg-white rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden">
+        <div class="bg-[#008069] p-4 text-white font-bold flex justify-between items-center">
+            <span>Edit Profil Kontak</span>
+            <div class="flex items-center gap-4">
+                <!-- Tombol Hapus (Bin) -->
+                <button onclick="deleteProfile()" class="text-white hover:text-red-300 transition-colors" title="Hapus Profil">
+                    <svg width="18" height="18" fill="currentColor" viewBox="0 0 16 16"><path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/><path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/></svg>
+                </button>
+                <!-- Tombol Close (X) -->
+                <button onclick="document.getElementById('edit-modal').classList.add('hidden')" class="text-white hover:text-gray-200 text-xl font-bold">&times;</button>
+            </div>
+        </div>
+        <div class="p-5 space-y-4">
+            <div>
+                <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Nama Kontak</label>
+                <input type="text" id="edit-name-input" class="w-full border-b-2 border-gray-100 p-2 text-sm focus:border-[#00a884] outline-none transition-colors" placeholder="Masukkan nama...">
+            </div>
+            
+            <div>
+                <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Biodata / Catatan</label>
+                <textarea id="edit-biodata-input" rows="3" class="w-full border-2 border-gray-100 rounded-lg p-2 text-sm focus:border-[#00a884] outline-none transition-colors resize-none" placeholder="Masukkan biodata atau catatan pelanggan..."></textarea>
+            </div>
+
+            <div>
+                <label class="block text-[10px] font-bold text-gray-400 uppercase mb-2">Label WA</label>
+                <div id="edit-labels-container" class="max-h-40 overflow-y-auto grid grid-cols-2 gap-2 bg-gray-50 p-3 rounded-lg border border-gray-100">
+                    <span class="text-xs text-gray-400 italic">Memuat label...</span>
+                </div>
+            </div>
+            <div class="flex gap-3 pt-2">
+                <button onclick="document.getElementById('edit-modal').classList.add('hidden')" class="flex-1 py-2.5 text-gray-500 font-bold text-sm bg-gray-100 rounded-lg">Batal</button>
+                <button id="btn-save-profile" onclick="saveProfile()" class="flex-1 bg-[#00a884] text-white py-2.5 rounded-lg font-bold text-sm shadow-md transition-colors hover:bg-[#008f6f]">Simpan</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="config-modal" class="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[100] hidden backdrop-blur-sm">
+    <div class="bg-white rounded-xl w-full max-w-[98%] shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+        <div class="bg-[#008069] p-4 text-white font-bold flex justify-between items-center">
+            <!-- Pada Modal Config, ubah span judulnya menjadi: -->
+            <span id="config-modal-title">⚙️ Setting</span>
+            <button onclick="closeConfigModal()" class="text-white hover:text-gray-200 text-xl font-bold">&times;</button>
+        </div>
+        
+        <div class="flex-1 overflow-y-auto p-5 space-y-5" id="config-content">
+            <div class="text-center py-5 text-gray-500" id="config-loading">
+                <div class="spinner mx-auto mb-2"></div>
+                Memuat data dari Spreadsheet...
+            </div>
+            
+           <div id="config-main" class="hidden space-y-6">
+                
+                <!-- BAGIAN 1: MANAJEMEN DEVICE (Disembunyikan otomatis oleh JS jika Gerigi diklik) -->
+                <div id="section-device-list" class="border border-gray-200 rounded-xl p-4 bg-white shadow-sm">
+                    <div class="flex justify-between items-center border-b pb-3 mb-4">
+                        <h3 class="font-bold text-[#008069] text-base flex items-center gap-2">Daftar Device Aktif</h3>
+                        <button onclick="openDevForm()" class="bg-[#00a884] text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-[#008f6f] shadow-sm transition-all">+ Tambah Baru</button>
+                    </div>
+                    <!-- Container Grid -->
+                    <div id="device-list" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3"></div>
+                </div>
+
+                <!-- BAGIAN 2: PENGATURAN SISTEM UTAMA (Object Mode) -->
+                <div id="section-sys-settings" class="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
+                    <div class="space-y-6 max-w-2xl">
+
+                       <!-- PENGATURAN UI -->
+                        <div>
+                            <h4 class="font-bold text-[#008069] border-b border-gray-200 pb-2 mb-3">🎨 Pengaturan UI</h4>
+                            
+                            <label class="block text-[10px] font-bold text-gray-500 uppercase mb-1 flex items-center gap-1 w-fit">
+                                Contact Sync Limit (H20)
+                                <svg onclick="showTooltip('Contact Sync Limit', 'Batas maksimal jumlah riwayat obrolan (kontak) terakhir yang ditarik dan ditampilkan di sebelah kiri UI agar performa browser tetap ringan dan tidak lag. Disarankan: 100.')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+                            </label>
+                            
+                            <input type="number" id="ui-limit" placeholder="Standar: 150" class="w-full bg-[#f0f2f5] rounded-xl p-3 text-[13px] text-gray-800 outline-none border-none focus:ring-2 focus:ring-[#25D366]/50">
+                        </div>
+                        
+                        <!-- PENGATURAN AI -->
+                        <div>
+                            <h4 class="font-bold text-[#008069] border-b border-gray-200 pb-2 mb-3">🤖 Pengaturan AI</h4>
+                            <div class="grid grid-cols-2 gap-4">
+                                
+                                <div>
+                                    <label class="block text-[10px] font-bold text-gray-500 uppercase mb-1 flex items-center gap-1 w-fit">
+                                        Max Output (E16)
+                                        <svg onclick="showTooltip('Max Output Tokens', 'Batas maksimal panjang karakter/token balasan AI.')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+                                    </label>
+                                    <input id="ai-max-tokens" type="text" class="w-full bg-[#f0f2f5] rounded-xl p-3 text-[13px] text-gray-800 outline-none border-none focus:ring-2 focus:ring-[#25D366]/50 transition-all">
+                                </div>
+
+                                <div>
+                                    <label class="block text-[10px] font-bold text-gray-500 uppercase mb-1 flex items-center gap-1 w-fit">
+                                        Temperature (F16)
+                                        <svg onclick="showTooltip('Temperature', 'jika diisi 0 maka jawaban akan sangat kaku dan formal mengikuti instruksi dan jika diisi 1 maka jawaban AI akan sangat kreatif. Kamu bisa melakukan pengetesan Tingkat kreativitas AI (0.0 sampai 1.0). Saran kami mulai dari temperatur 0.5 .')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+                                    </label>
+                                    <input id="ai-temp" type="text" class="w-full bg-[#f0f2f5] rounded-xl p-3 text-[13px] text-gray-800 outline-none border-none focus:ring-2 focus:ring-[#25D366]/50 transition-all">
+                                </div>
+
+                                <div>
+                                    <label class="block text-[10px] font-bold text-gray-500 uppercase mb-1 flex items-center gap-1 w-fit">
+                                        Limit History (E20)
+                                        <svg onclick="showTooltip('Limit History', 'Jumlah riwayat percakapan terakhir yang akan dicatat ke sistem dan dibaca oleh AI. Semakin banyak riwayat yang dicatat maka akan semakin komplek perintah yang harus dieksekusi AI. Saat ini kami menyarankan diisi dengan angka 12 percakapan. Kamu bisa ubah sesuai kebutuhan')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+                                    </label>
+                                    <input id="ai-limit-history" type="text" class="w-full bg-[#f0f2f5] rounded-xl p-3 text-[13px] text-gray-800 outline-none border-none focus:ring-2 focus:ring-[#25D366]/50 transition-all">
+                                </div>
+
+ <!-- Model Gemini AI -->
+                                <div class="col-span-2">
+                                    <label class="block text-[10px] font-bold text-gray-500 uppercase mb-1 flex items-center gap-1 w-fit">
+                                        Model Gemini AI (H18)
+                                        <svg onclick="showTooltip('Model Gemini AI', 'Daftar model yang digunakan (pisahkan dengan simbol pipe | jika lebih dari satu).')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+                                    </label>
+                                    <textarea id="ai-model" rows="3" oninput="this.style.height = 'auto'; this.style.height = this.scrollHeight + 'px'" class="w-full bg-[#f0f2f5] rounded-xl p-3 text-[13px] text-gray-800 outline-none border-none focus:ring-2 focus:ring-[#25D366]/50 transition-all resize-none overflow-hidden"></textarea>
+                                </div>
+
+                                <!-- Token Gemini AI -->
+                                <div class="col-span-2">
+                                    <label class="block text-[10px] font-bold text-gray-500 uppercase mb-1 flex items-center gap-1 w-fit">
+                                        Token Gemini AI (H22)
+                                        <svg onclick="showTooltip('Token Gemini AI', 'Kunci API / Token untuk mengakses layanan Google Gemini (pisahkan dengan simbol pipe | jika lebih dari satu).')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+                                    </label>
+                                    <textarea id="ai-token" rows="4" oninput="this.style.height = 'auto'; this.style.height = this.scrollHeight + 'px'" class="w-full bg-[#f0f2f5] rounded-xl p-3 text-[13px] text-gray-800 outline-none border-none focus:ring-2 focus:ring-[#25D366]/50 transition-all resize-none overflow-hidden"></textarea> 
+                                </div>
+
+                                <div>
+                                    <label class="block text-[10px] font-bold text-gray-500 uppercase mb-1 flex items-center gap-1 w-fit">
+                                        Qty Warmer (G20)
+                                        <svg onclick="showTooltip('Qty Warmer', 'Batas maksimal warming antar agen sebelum dihentikan otomatis. Cara kerjanya jika diisi angka 2 maka setelah AI membalas 2 pesan dari nomor warmer lain >> pesan berikutknya akan dihentikan. Sistem Loop atau berulang setiap hari')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+                                    </label>
+                                    <input id="ai-qty-warmer" type="text" class="w-full bg-[#f0f2f5] rounded-xl p-3 text-[13px] text-gray-800 outline-none border-none focus:ring-2 focus:ring-[#25D366]/50 transition-all">
+                                </div>
+
+                                <div>
+                                    <label class="block text-[10px] font-bold text-gray-500 uppercase mb-1 flex items-center gap-1 w-fit">
+                                        Rasio Warmer (B22)
+                                        <svg onclick="showTooltip('Rasio Warmer', 'Tingkat persentase rasio khusus untuk pesan warmer. Cukup ketik angkanya saja, misal: 50 untuk 50%.')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+                                    </label>
+                                    <div class="relative">
+                                        <input id="send-5" type="number" placeholder="50" class="w-full bg-[#f0f2f5] rounded-xl p-3 pr-8 text-[13px] text-gray-800 outline-none border-none focus:ring-2 focus:ring-[#25D366]/50 transition-all">
+                                        <span class="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 font-bold text-[13px]">%</span>
+                                    </div>
+                                </div>
+
+                                 <div class="col-span-2">
+                                 <label class="block text-[10px] font-bold text-gray-500 uppercase mb-1 flex items-center gap-1 w-fit">
+                                 Warmer Prompt (F20)
+                                 <svg onclick="showTooltip('Warmer Prompt', 'Instruksi kepribadian khusus saat AI melakukan proses Follow-Up / Warmer.')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+                                 </label>
+                                 <textarea id="ai-warmer" rows="2" 
+                                 oninput="this.style.height = 'auto'; this.style.height = this.scrollHeight + 'px'" class="w-full bg-[#f0f2f5] rounded-xl p-3 text-[13px] text-gray-800 outline-none border-none focus:ring-2 focus:ring-[#25D366]/50 transition-all resize-none overflow-hidden"></textarea>
+                                 </div>
+
+                            </div>
+                        </div>
+
+                        <!-- PENGATURAN SEND -->
+                        <div>
+                            <h4 class="font-bold text-[#008069] border-b border-gray-200 pb-2 mb-3">🚀 Pengaturan Send</h4>
+                            <div class="grid grid-cols-2 gap-4">
+                                
+                                <div>
+                                    <label class="block text-[10px] font-bold text-gray-500 uppercase mb-1 flex items-center gap-1 w-fit">
+                                        Limit Kloter (B17)
+                                        <svg onclick="showTooltip('Limit Kloter', 'Batas jumlah pesan yang dikirim secara bersamaan.')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+                                    </label>
+                                    <input id="send-0" type="text" class="w-full bg-[#f0f2f5] rounded-xl p-3 text-[13px] text-gray-800 outline-none border-none focus:ring-2 focus:ring-[#25D366]/50 transition-all">
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-[10px] font-bold text-gray-500 uppercase mb-1 flex items-center gap-1 w-fit">
+                                        Waktu Send (B18)
+                                        <svg onclick="showTooltip('Waktu Send', 'Jadwal jam operasional pengiriman otomatis (Misal: 08:00-16:00).')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+                                    </label>
+                                    <input id="send-1" type="text" class="w-full bg-[#f0f2f5] rounded-xl p-3 text-[13px] text-gray-800 outline-none border-none focus:ring-2 focus:ring-[#25D366]/50 transition-all">
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-[10px] font-bold text-gray-500 uppercase mb-1 flex items-center gap-1 w-fit">
+                                        Delay Pesan (B19)
+                                        <svg onclick="showTooltip('Delay Pesan per Detik', 'Jeda waktu jeda antar pengiriman pesan. Laporan terbaru menyebutkan bahwa whatsapp mendeteksi spam dari kecepatan balas setiap pesan masuk. Saran : gunakan rentang 120-160 detik')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+                                    </label>
+                                    <input id="send-2" type="text" class="w-full bg-[#f0f2f5] rounded-xl p-3 text-[13px] text-gray-800 outline-none border-none focus:ring-2 focus:ring-[#25D366]/50 transition-all">
+                                </div>
+
+
+                                    <!-- Status Pesan Statis (B20) -> id="send-3" -->
+                                    <div>
+                                      <label class="block text-[10px] font-bold text-gray-500 uppercase mb-1 flex items-center gap-1 w-fit">
+                                        Pesan Statis (B20)
+                                        <svg onclick="showTooltip('Pesan Statis', 'Mode pengiriman pesan statis tanpa random/spintext. jika di aktifkan maka sistem tidak akan lagi mengirim pesan berseri kepada costumer. pengaturan pesan statis dilakukan di menu konten dengan kode 0. (tonton video untuk memahami lebih jelas)')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+                                        </label>
+                                        <select id="send-3" onchange="togglePesanStatis()" class="w-full modern-select bg-[#f0f2f5] rounded-xl p-3 text-[13px] text-gray-800 outline-none border-none focus:ring-2 focus:ring-[#25D366]/50 transition-all cursor-pointer appearance-none">
+                                        <option value="Tidak Aktif">Tidak Aktif</option>
+                                        <option value="Aktif">Aktif</option>
+                                        </select></div>
+
+                                 <!-- List Pesan Statis (B21) -> id="wrapper-send-4" (Default hidden) -->
+                                 <div id="wrapper-send-4" class="col-span-2 hidden">
+                                  <label class="block text-[10px] font-bold text-gray-500 uppercase mb-1 flex items-center gap-1 w-fit">
+                                    List Pesan Statis (B21)
+                                    <svg onclick="showTooltip('Akun Pesan Statis', 'Silahkan pilih kode admin yang ingin menggunakan pesan campaign. Contoh Akun: Server, maka semua nomor admin yang mengandung \'Server\' akan otomatis menggunakan pesan campaign.')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+                                    </label>
+                                    <input id="send-4" type="text" class="w-full bg-[#f0f2f5] rounded-xl p-3 text-[13px] text-gray-800 outline-none border-none focus:ring-2 focus:ring-[#25D366]/50 transition-all">
+                                    </div>
+                                
+                                <div>
+                                    <label class="block text-[10px] font-bold text-gray-500 uppercase mb-1 flex items-center gap-1 w-fit">
+                                        Day Tier 2 (B23)
+                                        <svg onclick="showTooltip('Day Tier 2', 'Rasio tier 1 diatur melalui menu device. Saat ini whatapp juga menerapkan tier 2 yakni rasio 30 hari. Beberapa artikel menyebutkan bahwa algoritma whatsapp menghitung berapa jumlah pesan keluar dan masuk setiap nomor selama 30 hari terakhir.')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+                                    </label>
+                                    <input id="send-6" type="text" class="w-full bg-[#f0f2f5] rounded-xl p-3 text-[13px] text-gray-800 outline-none border-none focus:ring-2 focus:ring-[#25D366]/50 transition-all">
+                                </div>
+
+                                <div>
+                                    <label class="block text-[10px] font-bold text-gray-500 uppercase mb-1 flex items-center gap-1 w-fit">
+                                       Rasio Tier 2 (B24)
+                                        <svg onclick="showTooltip('Rasio Tier 2', 'Persentase beban kirim untuk nomor yang masuk kategori Tier 2. Jika diisi 0% maka Rasio Tier2 akan berstatus tidak aktif. Saran kami gunakan 50% selama 30 hari kedepan jika aman baru turunkan menjadi 25%, jika masih aman baru ditulis 0%.')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+                                    </label>
+                                    <div class="relative">
+                                        <input id="send-7" type="number" placeholder="50" class="w-full bg-[#f0f2f5] rounded-xl p-3 pr-8 text-[13px] text-gray-800 outline-none border-none focus:ring-2 focus:ring-[#25D366]/50 transition-all">
+                                        <span class="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 font-bold text-[13px]">%</span>
+                                    </div>
+                                </div>
+                                
+                            </div>
+                        </div>
+
+                        <!-- PENGATURAN LABEL -->
+                        <div>
+                            <h4 class="font-bold text-[#008069] border-b border-gray-200 pb-2 mb-3">🏷️ Kategori Label</h4>
+                            <div id="labels-container" class="space-y-2"></div>
+                        </div>
+
+                        <!-- PENGATURAN ADMIN -->
+                        <div>
+                            <h4 class="font-bold text-[#008069] border-b border-gray-200 pb-2 mb-3">🛡️ Role Admin</h4>
+                            <div id="admins-container" class="space-y-2"></div>
+                        </div>
+
+                        <button id="btn-save-sys" onclick="saveSysSettings()" class="bg-gray-800 text-white px-5 py-3 rounded-xl font-bold text-[14px] hover:bg-black transition-colors shadow-sm mt-4 w-full">Simpan Semua Pengaturan Sistem</button>
+                    </div>
+                </div>
+                        
+                    </div>
+              </div>
+
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- SUB-MODAL TAMBAH/EDIT DEVICE (DIPERLUAS UNTUK 16 KOLOM HIJAU) -->
+<!-- SUB-MODAL TAMBAH/EDIT DEVICE -->
+<div id="dev-modal" class="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-[110] hidden backdrop-blur-sm">
+    <div class="bg-white rounded-xl w-full max-w-3xl p-5 shadow-2xl flex flex-col max-h-[95vh]">
+        <div class="flex justify-between items-center border-b pb-3 mb-4">
+            <h3 id="dev-title" class="font-bold text-gray-700 text-lg">Edit Device</h3>
+            <button onclick="closeDevForm()" class="text-gray-400 hover:text-red-500 font-bold text-xl">&times;</button>
+        </div>
+        
+        <!-- Wadah URL Webhook -->
+        <div id="webhook-container" class="mb-5 p-3 bg-blue-50 border border-blue-200 rounded-lg hidden">
+            <p class="text-[10px] font-bold text-blue-800 uppercase mb-1.5">URL WEBHOOK : Paste Url ini ke menu setting webhook starsender/onesender</p>
+            <div class="flex items-center gap-2">
+                <input type="text" id="webhook-url-display" readonly class="w-full bg-white border border-blue-200 p-2 rounded text-xs text-gray-600 outline-none select-all">
+                <button onclick="copyWebhookUrl()" class="bg-blue-600 text-white px-4 py-2 rounded text-xs font-bold hover:bg-blue-700 shrink-0 shadow-sm transition-colors flex items-center gap-1">📋 Copy</button>
+            </div>
+        </div>
+
+        <!-- Area Form Scrollable -->
+<div class="overflow-y-auto flex-1 pr-2 space-y-4 custom-scrollbar min-h-0">
+    <input type="hidden" id="dev-index">
+    
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <!-- Device Name -->
+        <div>
+            <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
+                Device Name (A)
+                <svg onclick="showTooltip('Device Name (A)', 'Nama pengenal untuk perangkat ini, penamaan harus dibuat sama dengan nama dionesender/starsender (Misal: Server CS 62345678910).')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+            </label>
+            <input type="text" id="dev-col-0" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none">
+        </div>
+
+        <!-- Akun CS -->
+        <div>
+            <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
+                Akun CS (B)
+                <svg onclick="showTooltip('Akun CS (B)', 'Nama akun admin atau divisi yang memegang nomor ini (Misal: CS Pusat, Finance, CS Cake Zaroka, CS Skincare Mama).')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+            </label>
+            <input type="text" id="dev-col-1" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none">
+        </div>
+        
+        <!-- Kirim Pesan -->
+        <div>
+            <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
+                Kirim Pesan (C)
+                <svg onclick="showTooltip('Kirim Pesan (C)', 'Status aktif/tidaknya device ini untuk mengirim pesan blast atau broadcast otomatis.')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+            </label>
+            <select id="dev-col-2" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none cursor-pointer">
+                <option value="ON">ON</option>
+                <option value="OFF">OFF</option>
+                <option value="Device OFF">Device OFF</option>
+            </select>
+        </div>
+        
+        <!-- Set Rasio -->
+        <div>
+            <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
+                Set Rasio (Z)
+                <svg onclick="showTooltip('Set Rasio (Z)', 'Persentase batas Rasio pesan keluar dan pesan masuk harian. Cara kerjanya jika ada 10 pesan masuk maka sistem akan mengirim 5 pesan broadcast ke costumer. Rasio paling aman saat ini menggunakan 2:1 (50%), admin bisa bereksperimen memulai menggunakan angka 50% selama 7 hari, ternyata tidak diblokir maka bisa dinaikan menjadi 55%. Namun jika terkena pemblokiran maka rasio diatur agar lebih rendah dari 50% menjadi 25%')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+            </label>
+            <input type="text" id="dev-col-25" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none">
+        </div>
+
+        <!-- No Server -->
+        <div>
+            <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
+                No Server (G)
+                <svg onclick="showTooltip('No Server (G)', 'Nomor WA device admin yang dikoneksikan ke starsender/onesender berawalan 62 tanpa spasi atau tanda + (Contoh: 6281234...).')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+            </label>
+            <input type="text" id="dev-col-6" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none">
+        </div>
+
+        <!-- BSUID -->
+        <div>
+            <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
+                BSUID (H)
+                <svg onclick="showTooltip('BSUID (H)', 'ID identitas unik dari server WhatsApp (Opsional/Bisa dikosongkan).')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+            </label>
+            <input type="text" id="dev-col-7" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none">
+        </div>
+        
+        <!-- API KEY -->
+        <div class="md:col-span-2">
+            <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
+                API Key (I)
+                <svg onclick="showTooltip('API Key (I)', 'Kode keamanan/Token dari penyedia layanan pihak ketiga (Starsender/Onesender) agar OmniBot bisa mengirim pesan via API.')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+            </label>
+            <input type="text" id="dev-col-8" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none">
+        </div>
+
+        <!-- API URL -->
+        <div>
+            <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
+                API URL (J)
+                <svg onclick="showTooltip('API URL (J)', 'Link target pengiriman pesan (Contoh: https://api.starsender.online/api/send).')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+            </label>
+            <input type="text" id="dev-col-9" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none">
+        </div>
+        
+        <!-- Prefix URL -->
+        <div>
+            <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
+                Prefix URL (K)
+                <svg onclick="showTooltip('Prefix URL (K)', 'Khusus pengguna OneSender: Isi dengan URL dasar (Domain) server Anda tanpa /api... belakangnya.')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+            </label>
+            <input type="text" id="dev-col-10" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none">
+        </div>
+        
+        <!-- AI Replay -->
+        <div>
+            <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
+                AI Replay (L)
+                <svg onclick="showTooltip('AI Replay (L)', 'Tombol sakelar untuk mengizinkan atau melarang sistem AI membalas otomatis di device ini.')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+            </label>
+            <select id="dev-col-11" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none cursor-pointer">
+                <option value="ON">ON</option>
+                <option value="OFF">OFF</option>
+            </select>
+        </div>
+        
+        <!-- Auto Label -->
+        <div>
+            <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
+                Auto Label (E)
+                <svg onclick="showTooltip('Auto Label (E)', 'Tag/Label otomatis yang disematkan saat kontak baru pertama kali masuk lewat device ini.')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+            </label>
+            <input type="text" id="dev-col-4" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none">
+        </div>
+        
+        <!-- Jenis WA -->
+        <div>
+            <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
+                Jenis (X)
+                <svg onclick="showTooltip('Jenis (X)', 'Menandakan apakah nomor yang dihubungkan adalah tipe WhatsApp Biasa atau WA Bisnis.')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+            </label>
+            <select id="dev-col-23" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none cursor-pointer">
+                <option value="WA Biasa">WA Biasa</option>
+                <option value="WA Bisnis">WA Bisnis</option>
+            </select>
+        </div>
+        
+        <!-- Masa Aktif -->
+        <div>
+            <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
+                Masa Aktif (Y)
+                <svg onclick="showTooltip('Masa Aktif (Y)', 'Tanggal jatuh tempo (expired) dari penyedia layanan telpon seluler seperti indosat/telkomsel sebagai pengingat agar nomor cs tidak hangus.')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+            </label>
+            <input type="date" id="dev-col-24" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none h-[38px] cursor-pointer">
+        </div>
+    </div>
+    
+    <div class="mt-4">
+        <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
+            Prompt Vision (N)
+            <svg onclick="showTooltip('Prompt Vision (N)', 'Tugas khusus untuk AI saat menerima kiriman gambar (Misal: Baca struk mutasi ini, ekstrak nama dan harga, lalu formatkan ke CSV).')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+        </label>
+        <textarea id="dev-col-13" rows="3" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none"></textarea>
+    </div>
+    
+    <div class="mt-4">
+        <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
+            Prompt Gemini (M)
+            <svg onclick="showTooltip('Prompt Gemini (M)', 'Instruksi khusus atau kepribadian yang diberikan ke sistem AI untuk menentukan cara ia membalas chat pelanggan pada device ini.')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+        </label>
+        <textarea id="dev-col-12" rows="3" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none"></textarea>
+    </div>
+</div>        
+        <div class="flex gap-3 mt-5 pt-4 border-t shrink-0">
+            <button onclick="closeDevForm()" class="flex-1 bg-gray-200 text-gray-700 py-3 rounded-lg text-sm font-bold hover:bg-gray-300 transition-colors">Batal</button>
+            <button id="btn-save-dev" onclick="saveDevData()" class="flex-1 bg-[#00a884] text-white py-3 rounded-lg text-sm font-bold shadow-md hover:bg-[#008f6f] transition-colors">Simpan Semua Perubahan</button>
+        </div>
+    </div>
+</div>
+
+<!-- GLOBAL TOOLTIP MODAL -->
+<div id="global-tooltip-modal" class="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[300] hidden backdrop-blur-sm transition-opacity">
+    <div class="bg-white rounded-2xl shadow-2xl p-6 max-w-sm w-full text-center relative border border-gray-100">
+        <div class="w-12 h-12 bg-green-100 text-[#008069] rounded-full flex items-center justify-center mx-auto mb-3">
+            <svg width="24" height="24" fill="currentColor" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+        </div>
+        <h3 id="tooltip-title" class="font-bold text-gray-800 text-lg mb-2">Info</h3>
+        <p id="tooltip-text" class="text-gray-500 text-sm leading-relaxed mb-5">Detail penjelasan.</p>
+        <button onclick="closeTooltip()" class="bg-[#00a884] text-white px-6 py-2.5 rounded-xl font-bold w-full shadow-md hover:bg-[#008f6f] transition-colors">Saya Mengerti</button>
+    </div>
+</div>
+
+<!-- MODAL LOGIN AWAL -->
+<div id="login-modal" class="fixed inset-0 bg-[#f0f2f5] flex items-center justify-center p-4 z-[9999]">
+    <div class="bg-white rounded-2xl shadow-xl p-8 max-w-sm w-full border border-gray-100 text-center">
+        <div class="w-16 h-16 bg-[#25D366] text-white rounded-full flex items-center justify-center mx-auto mb-4 shadow-sm">
+            <svg width="32" height="32" fill="currentColor" viewBox="0 0 16 16"><path d="M13.601 2.326A7.854 7.854 0 0 0 7.994 0C3.627 0 .068 3.558.064 7.926c0 1.399.366 2.76 1.057 3.965L0 16l4.204-1.102a7.933 7.933 0 0 0 3.79.965h.004c4.368 0 7.926-3.558 7.93-7.93A7.898 7.898 0 0 0 13.6 2.326zM7.994 14.521a6.573 6.573 0 0 1-3.356-.92l-.24-.144-2.494.654.666-2.433-.156-.251a6.56 6.56 0 0 1-1.007-3.505c0-3.626 2.957-6.584 6.591-6.584a6.56 6.56 0 0 1 4.66 1.931 6.557 6.557 0 0 1 1.928 4.66c-.004 3.639-2.961 6.592-6.592 6.592zm3.615-4.934c-.197-.099-1.17-.578-1.353-.646-.182-.065-.315-.099-.445.099-.133.197-.513.646-.627.775-.114.133-.232.148-.43.05-.197-.1-.836-.308-1.592-.985-.59-.525-.985-1.175-1.103-1.372-.114-.198-.011-.304.088-.403.087-.088.197-.232.296-.346.1-.114.133-.198.198-.33.065-.134.034-.248-.015-.347-.05-.099-.445-1.076-.612-1.47-.16-.389-.323-.335-.445-.34-.114-.007-.247-.007-.38-.007a.729.729 0 0 0-.529.247c-.182.198-.691.677-.691 1.654 0 .977.71 1.916.81 2.049.098.133 1.394 2.132 3.383 2.992.47.205.84.326 1.129.418.475.152.904.129 1.246.08.38-.058 1.171-.48 1.338-.943.164-.464.164-.86.114-.943-.049-.084-.182-.133-.38-.232z"/></svg>
+        </div>
+        <h3 class="font-bold text-gray-800 text-xl mb-1">WAOmniBot Login</h3>
+        <p class="text-xs text-gray-500 mb-6">Silakan masuk menggunakan akun admin</p>
+        
+        <div class="space-y-3">
+            <input type="text" id="login-user" placeholder="Username" class="w-full bg-[#f0f2f5] rounded-xl p-3.5 text-sm text-gray-800 outline-none border-none focus:ring-2 focus:ring-[#25D366]/50 transition-all text-center">
+            <input type="password" id="login-pass" placeholder="Password" class="w-full bg-[#f0f2f5] rounded-xl p-3.5 text-sm text-gray-800 outline-none border-none focus:ring-2 focus:ring-[#25D366]/50 transition-all text-center" onkeypress="if(event.key==='Enter') doLogin()">
+            <button id="login-btn" onclick="doLogin()" class="w-full bg-[#25D366] text-white py-3.5 rounded-xl font-bold text-[15px] shadow-md hover:bg-[#20bd5a] transition-colors mt-2">Login</button>
+        </div>
+    </div>
+</div>
+
+</body>
+</html>

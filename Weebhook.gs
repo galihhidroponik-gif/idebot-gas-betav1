@@ -582,13 +582,60 @@ if (mappedData.file_url) {
 
     let checkLabel = finalC.toUpperCase();
 
-    // URUTAN 1: Cek File/Gambar (Jika Media -> Vision -> Queue)
+// ====================================================================
+// FITUR BARU: MANUAL INPUT FINANCE (/finance)
+// ====================================================================
+// 1. Tangkap teks secara agresif (mendukung caption gambar dan teks biasa)
+let textForFinance = "";
+if (data) textForFinance = data.message_text || data.caption || data.text || data.message || "";
+if (!textForFinance) textForFinance = mappedData.message || "";
+textForFinance = String(textForFinance).trim();
 
-    if (mappedData.file_url) {
-      let rawVision = config.device.promptrawVision || "";
-      let promptVision = "### [TUGAS KHUSUS ANALISIS BUKTI TRANSFER]\n" +
-      "Ekstrak Foto data mutasi atau bukti transfer ke dalam format dipisahkan koma (CSV) persis seperti ini:\n"+
-      "Status|Jenis,Kategori,Nama Item,Qty,Satuan,Harga Satuan,Total,Tgl Transaksi\n\n"
+// Cek apakah perintah diawali dengan /finance (Case Insensitive)
+let isManualFinance = textForFinance.toUpperCase().startsWith("/FINANCE");
+
+if (isManualFinance) {
+    // Fungsi mungil untuk mengekstrak nilai berdasarkan kata kunci di pesan WA
+    let getVal = (key) => {
+        let regex = new RegExp(key + "\\s*[:=]\\s*(.+)", "i");
+        let match = textForFinance.match(regex);
+        return match ? match[1].trim() : "";
+    };
+
+    let valJenis    = getVal("Jenis");
+    let valKategori = getVal("Kategori");
+    let valTgl      = getVal("Tgl Transaksi") || getVal("Tanggal");
+    let valNamaItem = getVal("Nama Item");
+    let valQty      = getVal("Qty") || getVal("Quantity");
+    let valSatuan   = getVal("Satuan");
+    let valHarga    = getVal("Harga Satuan") || getVal("Harga");
+    let valTotal    = getVal("Total");
+    let valStatus   = getVal("Status");
+
+    // Hapus titik pemisah ribuan agar masuk ke Sheet murni sebagai angka
+    if (valHarga) valHarga = valHarga.replace(/\./g, "");
+    if (valTotal) valTotal = valTotal.replace(/\./g, "");
+
+    // 2. Susun format array string (pakai double titik koma) agar diproses mulus oleh logImageActivity
+    // Urutan: Jenis;;Kategori;;Tgl Transaksi;;Nama Item;;Qty;;Satuan;;Harga Satuan;;Total
+    let manualDataCSV = valJenis + ";;" + valKategori + ";;" + valTgl + ";;" + valNamaItem + ";;" + valQty + ";;" + valSatuan + ";;" + valHarga + ";;" + valTotal+ ";;" + valStatus ;
+
+    let logTambahan = "Input Manual via /finance\n" + imagePipelineLogs.join("\n");
+
+    // 3. Eksekusi penulisan ke Sheet Finance (Fungsi Master Handle)
+    logImageActivity(uniqueIdB, logTambahan, driveLink, manualDataCSV, finalColD, namaAkun, finalH, clientSheetId, mappedData, namaFile, textForFinance);
+
+    // 4. Kunci proses lanjutan agar AI tidak ter-trigger dan tidak membalas pesan ini
+    finalAiLabel = mappedData.is_me ? "Admin Reply" : "Stop"; 
+    finalAiLog = "Processed Manual Finance";
+    updateKolomY = true;
+}
+// URUTAN 1: Cek File/Gambar (Jika Media -> Vision -> Queue)
+else if (mappedData.file_url) {
+    let rawVision = config.device.promptrawVision || "";
+      let promptVision = "### [TUGAS KHUSUS ANALISIS GAMBAR]\n"+
+      "Ekstrak data bukti mutasi/transfer/gambar dengan format presisi. Pisahkan setiap nilai menggunakan Double Titik Koma (;;) persis seperti pola berikut:\n"+
+      "Status|Jenis;;Kategori;;Tgl Transaksi;;Nama Item;;Qty;;Satuan;;Harga Satuan;;Total\n\n"
       + rawVision + "";
       
       finalAiPrompt = promptVision;
@@ -623,9 +670,21 @@ if (mappedData.file_url) {
       updateKolomY = true; 
 
      // EKSEKUSI LOG KHUSUS: Kirim 1x saja hasil tumpukan array ke Google Sheet LOG
-      // ===================================================================================
-      // Mengirimkan data tambahan: Agen (finalColD), Akun (namaAkun), dan Nama Konsumen (finalH)
-      logImageActivity(uniqueIdB, imagePipelineLogs.join("\n"), driveLink, aiExtractedData, finalColD, namaAkun, finalH, clientSheetId, mappedData.message, namaFile);
+// ===================================================================================
+
+// BLOK KODE BARU: Ekstraksi teks/caption gambar sekuat mungkin
+let extractedCaption = "";
+if (data) {
+    // Coba berbagai variasi key dari payload Starsender/Onesender untuk caption gambar
+    extractedCaption = data.message_text || data.caption || data.text || data.message || "";
+}
+// Jika masih kosong, coba dari mappedData
+if (!extractedCaption && mappedData && mappedData.message) {
+    extractedCaption = mappedData.message;
+}
+
+// Mengirimkan data tambahan: Agen (finalColD), Akun (namaAkun), dan Nama Konsumen (finalH), beserta caption
+logImageActivity(uniqueIdB, imagePipelineLogs.join("\n"), driveLink, aiExtractedData, finalColD, namaAkun, finalH, clientSheetId, mappedData, namaFile, extractedCaption);
     } 
     // URUTAN KONDISI UNTUK TEKS (SKENARIO 2 & 3)
     else {
@@ -1109,8 +1168,13 @@ function logWebhookError(message, rawData, clientSheetId) { // <-- Tambah Parame
 
 // Tambahkan parameter imagePipelineLogs di ujung
 function callGeminiVision(apiKey, primaryModel, fallbackStr, systemPrompt, userMessage, imageBlob, temp, imagePipelineLogs) {
-  var modelsToTry = [primaryModel].concat(fallbackStr ? String(fallbackStr).split("|").map(m => m.trim()) : []).filter((item, pos, self) => self.indexOf(item) == pos && item !== "");
   
+  // BLOK KODE BARU: Memecah fallback berdasarkan Enter (\n), koma (,), atau pipe (|)
+  var cleanPrimary = primaryModel ? String(primaryModel).trim().split(/[\n|,]/)[0].trim() : "";
+  var fallbackArr = fallbackStr ? String(fallbackStr).split(/[\n|,]/).map(m => m.trim()) : [];
+  
+  var modelsToTry = [cleanPrimary].concat(fallbackArr).filter((item, pos, self) => self.indexOf(item) == pos && item !== "");
+
   // Sensor sebagian API Key untuk keamanan Log
   var maskedKey = apiKey ? apiKey.substring(0, 6) + "..." + apiKey.slice(-4) : "KOSONG";
 
@@ -1193,31 +1257,34 @@ function uploadImageToDrive(imageBlob, fileName, folderId, clientSheetId) { // <
 }
 
 // Fungsi untuk merekam hasil AI Vision beserta data pelengkap ke Spreadsheet
-function logImageActivity(uniqueIdB, pipelineLog, driveLink, aiExtractedData, agen, akun, namaKonsumen, clientSheetId, mappedData, namaFile) {
+// BLOK KODE BARU: Penambahan parameter captionText
+function logImageActivity(uniqueIdB, pipelineLog, driveLink, aiExtractedData, agen, akun, namaKonsumen, clientSheetId, mappedData, namaFile, captionText) {
   try {
     const ss = SpreadsheetApp.openById(clientSheetId);
     // Asumsi penyimpanan difokuskan pada Sheet Finance sesuai pola URL "Finance_Images"
     const sheetFinance = ss.getSheetByName("Finance"); 
     if (!sheetFinance) return;
 
-    // 1. Parsing CSV dari hasil Gemini AI Vision
+    // 1. Parsing Data dari hasil Gemini AI Vision (Dioptimasi)
     let statusAI = "Pending";
     let jenis = "", kategori = "", namaItem = "", qty = "", satuan = "", harga = "", total = "", tglTransaksiAI = "";
     
-    // Blok Kode Baru: Langsung pecah dengan koma karena aiExtractedData sudah murni CSV
     if (aiExtractedData) {
-      let csvParts = aiExtractedData.split(",");
+      // PERBAIKAN 1: Buang enter/baris baru dari halusinasi AI (misal kata "Berhasil" di baris bawah)
+      let cleanData = aiExtractedData.split(/\n/)[0].trim();
+      
+      // PERBAIKAN 2: Gunakan double titik koma (;;) agar teks panjang & koma tidak rusak
+      let csvParts = cleanData.split(";;");
       
       jenis = csvParts[0] ? csvParts[0].trim() : "";
       kategori = csvParts[1] ? csvParts[1].trim() : "";
-      // Gunakan .slice(2, -5) jika suatu saat 'Nama Item' berisi tanda koma agar tidak terpotong salah, 
-      // tapi untuk format saat ini split biasa sudah cukup.
-      namaItem = csvParts[2] ? csvParts[2].trim() : "";
-      qty = csvParts[3] ? csvParts[3].trim() : "";
-      satuan = csvParts[4] ? csvParts[4].trim() : "";
-      harga = csvParts[5] ? csvParts[5].trim() : "";
-      total = csvParts[6] ? csvParts[6].trim() : "";
-      tglTransaksiAI = csvParts[7] ? csvParts[7].trim() : ""; 
+      tglTransaksiAI = csvParts[2] ? csvParts[2].trim() : ""; // <-- Sesuai Prompt (Urutan 3)
+      namaItem = csvParts[3] ? csvParts[3].trim() : "";       // <-- Sesuai Prompt (Urutan 4)
+      qty = csvParts[4] ? csvParts[4].trim() : "";
+      satuan = csvParts[5] ? csvParts[5].trim() : "";
+      harga = csvParts[6] ? csvParts[6].trim() : "";
+      total = csvParts[7] ? csvParts[7].trim() : "";
+      statusFinance = (csvParts[8] || "").trim() || "verifikasi";
     }
 
     // 2. Generate Format Tanggal, Bulan & ID Unik Inv
@@ -1232,41 +1299,49 @@ function logImageActivity(uniqueIdB, pipelineLog, driveLink, aiExtractedData, ag
     const mnt = String(d.getMinutes()).padStart(2, '0');
     const sec = String(d.getSeconds()).padStart(2, '0');
     
-    // Output Kolom Q: "2608 - Agustus"
-    const formatBulan = `${yy}${mm} - ${months[d.getMonth()]}`; 
+    // BLOK KODE BARU: Format bulan teks murni tanpa tanda strip
+    // Output Kolom Q: "2608 Agustus"
+    const formatBulan = `${yy}${mm} ${months[d.getMonth()]}`;
+
     // Output Kolom U: "260823092302"
     const idUniqInv = `${yy}${mm}${dd}${hh}${mnt}${sec}`; 
 
     // 3. Mapping Data Payload Lanjutan
-    const notePesan = (mappedData && mappedData.message) ? mappedData.message : "";
-    const idGroup = (mappedData && mappedData.is_group) ? mappedData.from : "";
+    // BLOK KODE BARU: Gunakan captionText yang sudah diekstrak kuat
+    const notePesan = captionText ? String(captionText).trim() : "";
+    
+    // Perbaikan ID Group jika dari mappedData kurang akurat
+    let idGroup = "";
+    if (mappedData && mappedData.is_group) {
+        idGroup = mappedData.from || mappedData.to || "";
+    }
     const namaFileFull = "Finance_Images/" + (namaFile || "Unknown.jpg");
 
     // 4. Susun Array untuk satu kali penulisan massal (appendRow)
     let newRow = [];
     newRow[0] = Utilities.formatDate(d, tz, "dd/MM/yyyy HH:mm:ss"); // Kolom A
-    newRow[1] = uniqueIdB; // Kolom B
-    newRow[2] = pipelineLog; // Kolom C
-    newRow[3] = agen; // Kolom D
-    newRow[4] = akun; // Kolom E
-    newRow[5] = namaKonsumen; // Kolom F
-    newRow[6] = driveLink; // Kolom G
-    newRow[7] = jenis; // Kolom H
-    newRow[8] = kategori; // Kolom I
+    newRow[1] = akun; // Kolom B
+    newRow[2] = agen;  // Kolom C
+    newRow[3] = uniqueIdB; // Kolom D
+    newRow[4] = namaKonsumen; // Kolom E
+    newRow[5] = statusFinance;  // Kolom F (Status statis) 
+    newRow[6] = jenis;  // Kolom G
+    newRow[7] = kategori; // Kolom H
+    newRow[8] = tglTransaksiAI; // Kolom I  (Tgl Transaksi dari Vision)
     newRow[9] = namaItem; // Kolom J
     newRow[10] = qty; // Kolom K
     newRow[11] = satuan; // Kolom L
     newRow[12] = harga; // Kolom M
     newRow[13] = total; // Kolom N
     
-    // --- PENAMBAHAN REQUEST BARU ---
-    newRow[14] = notePesan;           // Kolom O (Note)
-    newRow[15] = "verifikasi";        // Kolom P (Status statis)
-    newRow[16] = formatBulan;         // Kolom Q (Bulan)
-    newRow[17] = namaFileFull;        // Kolom R (Nama File)
-    newRow[18] = tglTransaksiAI;      // Kolom S (Tgl Transaksi dari Vision)
-    newRow[19] = idGroup;             // Kolom T (Id Group)
-    newRow[20] = idUniqInv;           // Kolom U (No Inv Unik)
+    // --- PENAMBAHAN REQUEST BARU --- 
+    newRow[14] = notePesan;   // Kolom O (Note)
+    newRow[15] = idGroup;     // Kolom P 
+    newRow[16] = idUniqInv;   // Kolom Q (No Inv Unik)
+    newRow[17] = driveLink;   // Kolom R 
+    newRow[18] = namaFileFull; // Kolom S (Nama File) 
+    newRow[19] = pipelineLog;  // Kolom T  
+    newRow[20] = formatBulan;  // Kolom U (Bulan) 
 
     // 5. Eksekusi Tulis ke Sheet klien
     sheetFinance.appendRow(newRow);

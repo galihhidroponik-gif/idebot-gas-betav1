@@ -479,33 +479,35 @@ function processWebhook(data, clientSheetId) { // <-- Tambah Parameter
     let shortId = String(mappedData.message_id).slice(-4);
     let pesanFinal = mappedData.message || "";
     let driveLink = "";
+    let namaFile = "";
 
     // =========================================================
-    // OPTIMASI GAMBAR: BLOB DAN WADAH LAPORAN (LOG)
-    // =========================================================
-    let imageBlobGlobal = null; 
-    let imagePipelineLogs = []; // Keranjang penampung log agar tidak memberatkan server
+// OPTIMASI GAMBAR: BLOB DAN WADAH LAPORAN (LOG)
+// =========================================================
+let imageBlobGlobal = null;
+let imagePipelineLogs = [];
 
-    if (mappedData.file_url) {
-      const FOLDER_ID = config.folderId; 
-      let fullUrl = "";
+if (mappedData.file_url) {
+    const FOLDER_ID = config.folderId;
+    let fullUrl = "";
+    
+    /* PERBAIKAN URL STARSENDER */
+    let rawFileUrl = String(mappedData.file_url).trim();
+    if (rawFileUrl.startsWith("http://") || rawFileUrl.startsWith("https://")) {
+        fullUrl = encodeURI(rawFileUrl);
+    } else {
+        let prefix = config.device.prefixUrl || "";
+        if (prefix.endsWith('/') && rawFileUrl.startsWith('/')) {
+            fullUrl = prefix + rawFileUrl.substring(1);
+        } else {
+            fullUrl = prefix + rawFileUrl;
+        }
+    }
 
-      /* PERBAIKAN URL STARSENDER */
-      let rawFileUrl = String(mappedData.file_url).trim();
-      if (rawFileUrl.startsWith("http://") || rawFileUrl.startsWith("https://")) {
-          fullUrl = encodeURI(rawFileUrl);
-      } else {
-          let prefix = config.device.prefixUrl || "";
-          if (prefix.endsWith('/') && rawFileUrl.startsWith('/')) {
-             fullUrl = prefix + rawFileUrl.substring(1);
-          } else {
-             fullUrl = prefix + rawFileUrl;
-          }
-      }
-
-      let ext = fullUrl.split('.').pop().split(/\#|\?/)[0]; 
-      if (ext.length > 4 || ext.length < 2) ext = "jpg"; 
-      let namaFile = mappedData.tglformat + "_" + uniqueIdB + "." + ext;
+    let ext = fullUrl.split('.').pop().split(/\#|\?/)[0];
+    if (ext.length > 4 || ext.length < 2) ext = "jpg";
+    
+    namaFile = mappedData.tglformat + "_" + uniqueIdB + "." + ext; // <--- PERBAIKAN 2: Hapus awalan 'let' agar nilainya terlempar ke scope global
       
       imagePipelineLogs.push("URL TARGET: " + fullUrl);
 
@@ -581,15 +583,13 @@ function processWebhook(data, clientSheetId) { // <-- Tambah Parameter
     let checkLabel = finalC.toUpperCase();
 
     // URUTAN 1: Cek File/Gambar (Jika Media -> Vision -> Queue)
+
     if (mappedData.file_url) {
       let rawVision = config.device.promptrawVision || "";
       let promptVision = "### [TUGAS KHUSUS ANALISIS BUKTI TRANSFER]\n" +
-        "Ekstrak Foto data mutasi atau bukti transfer ke dalam format dipisahkan koma (CSV) persis seperti ini:\n"+
-        "Status|Jenis,Kategori,Nama Item,Qty,Satuan,Harga Satuan,Total\n\n" 
-        +
-        rawVision 
-        +
-        "";
+      "Ekstrak Foto data mutasi atau bukti transfer ke dalam format dipisahkan koma (CSV) persis seperti ini:\n"+
+      "Status|Jenis,Kategori,Nama Item,Qty,Satuan,Harga Satuan,Total,Tgl Transaksi\n\n"
+      + rawVision + "";
       
       finalAiPrompt = promptVision;
       
@@ -625,7 +625,7 @@ function processWebhook(data, clientSheetId) { // <-- Tambah Parameter
      // EKSEKUSI LOG KHUSUS: Kirim 1x saja hasil tumpukan array ke Google Sheet LOG
       // ===================================================================================
       // Mengirimkan data tambahan: Agen (finalColD), Akun (namaAkun), dan Nama Konsumen (finalH)
-      logImageActivity(uniqueIdB, imagePipelineLogs.join("\n"), driveLink, aiExtractedData, finalColD, namaAkun, finalH, clientSheetId);
+      logImageActivity(uniqueIdB, imagePipelineLogs.join("\n"), driveLink, aiExtractedData, finalColD, namaAkun, finalH, clientSheetId, mappedData.message, namaFile);
     } 
     // URUTAN KONDISI UNTUK TEKS (SKENARIO 2 & 3)
     else {
@@ -1192,37 +1192,87 @@ function uploadImageToDrive(imageBlob, fileName, folderId, clientSheetId) { // <
   }
 }
 
-// Menambahkan parameter agen, akun, dan namaKonsumen
-function logImageActivity(uniqueId, detail, driveLink, aiDataStr, agen, akun, namaKonsumen, clientSheetId) { 
+// Fungsi untuk merekam hasil AI Vision beserta data pelengkap ke Spreadsheet
+function logImageActivity(uniqueIdB, pipelineLog, driveLink, aiExtractedData, agen, akun, namaKonsumen, clientSheetId, mappedData, namaFile) {
   try {
-    const ss = SpreadsheetApp.openById(clientSheetId); 
-    let sheet = ss.getSheetByName("Finance");
+    const ss = SpreadsheetApp.openById(clientSheetId);
+    // Asumsi penyimpanan difokuskan pada Sheet Finance sesuai pola URL "Finance_Images"
+    const sheetFinance = ss.getSheetByName("Finance"); 
+    if (!sheetFinance) return;
+
+    // 1. Parsing CSV dari hasil Gemini AI Vision
+    let statusAI = "Pending";
+    let jenis = "", kategori = "", namaItem = "", qty = "", satuan = "", harga = "", total = "", tglTransaksiAI = "";
     
-    if (!sheet) {
-      sheet = ss.insertSheet("Finance");
-      // Header diperpanjang dan digeser sampai Kolom N
-      sheet.appendRow(["Timestamp", "ID Transaksi", "Detail Pipeline", "Agen", "Akun", "Nama Konsumen", "Link GDrive", "Jenis", "Kategori", "Nama Item", "Qty", "Satuan", "Harga Satuan", "Total"]); 
-      sheet.getRange("A1:N1").setFontWeight("bold");
+    // Blok Kode Baru: Langsung pecah dengan koma karena aiExtractedData sudah murni CSV
+    if (aiExtractedData) {
+      let csvParts = aiExtractedData.split(",");
+      
+      jenis = csvParts[0] ? csvParts[0].trim() : "";
+      kategori = csvParts[1] ? csvParts[1].trim() : "";
+      // Gunakan .slice(2, -5) jika suatu saat 'Nama Item' berisi tanda koma agar tidak terpotong salah, 
+      // tapi untuk format saat ini split biasa sudah cukup.
+      namaItem = csvParts[2] ? csvParts[2].trim() : "";
+      qty = csvParts[3] ? csvParts[3].trim() : "";
+      satuan = csvParts[4] ? csvParts[4].trim() : "";
+      harga = csvParts[5] ? csvParts[5].trim() : "";
+      total = csvParts[6] ? csvParts[6].trim() : "";
+      tglTransaksiAI = csvParts[7] ? csvParts[7].trim() : ""; 
     }
+
+    // 2. Generate Format Tanggal, Bulan & ID Unik Inv
+    const d = new Date();
+    const tz = Session.getScriptTimeZone();
     
-    // Pecah string koma dari AI menjadi Array
-    let arrData = [];
-    if (aiDataStr) {
-        arrData = aiDataStr.split(",").map(item => item.trim());
-    }
+    const months = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+    const yy = String(d.getFullYear()).slice(-2);
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mnt = String(d.getMinutes()).padStart(2, '0');
+    const sec = String(d.getSeconds()).padStart(2, '0');
     
-    // Pengaman: Pastikan Array AI selalu berisi 7 elemen untuk mengisi Kolom H sampai N
-    while (arrData.length < 7) {
-        arrData.push(""); 
-    }
+    // Output Kolom Q: "2608 - Agustus"
+    const formatBulan = `${yy}${mm} - ${months[d.getMonth()]}`; 
+    // Output Kolom U: "260823092302"
+    const idUniqInv = `${yy}${mm}${dd}${hh}${mnt}${sec}`; 
+
+    // 3. Mapping Data Payload Lanjutan
+    const notePesan = (mappedData && mappedData.message) ? mappedData.message : "";
+    const idGroup = (mappedData && mappedData.is_group) ? mappedData.from : "";
+    const namaFileFull = "Finance_Images/" + (namaFile || "Unknown.jpg");
+
+    // 4. Susun Array untuk satu kali penulisan massal (appendRow)
+    let newRow = [];
+    newRow[0] = Utilities.formatDate(d, tz, "dd/MM/yyyy HH:mm:ss"); // Kolom A
+    newRow[1] = uniqueIdB; // Kolom B
+    newRow[2] = pipelineLog; // Kolom C
+    newRow[3] = agen; // Kolom D
+    newRow[4] = akun; // Kolom E
+    newRow[5] = namaKonsumen; // Kolom F
+    newRow[6] = driveLink; // Kolom G
+    newRow[7] = jenis; // Kolom H
+    newRow[8] = kategori; // Kolom I
+    newRow[9] = namaItem; // Kolom J
+    newRow[10] = qty; // Kolom K
+    newRow[11] = satuan; // Kolom L
+    newRow[12] = harga; // Kolom M
+    newRow[13] = total; // Kolom N
     
-    // Gabungkan Data Kolom A-G dengan Array Data Kolom H-N dari AI
-    let rowData = [new Date(), uniqueId, detail, agen, akun, namaKonsumen, driveLink].concat(arrData.slice(0, 7));
-    
-    // Tulis sekaligus 1 baris penuh
-    sheet.appendRow(rowData);
-  } catch (e) {
-    // Error diabaikan agar tidak membuat webhook crash
+    // --- PENAMBAHAN REQUEST BARU ---
+    newRow[14] = notePesan;           // Kolom O (Note)
+    newRow[15] = "verifikasi";        // Kolom P (Status statis)
+    newRow[16] = formatBulan;         // Kolom Q (Bulan)
+    newRow[17] = namaFileFull;        // Kolom R (Nama File)
+    newRow[18] = tglTransaksiAI;      // Kolom S (Tgl Transaksi dari Vision)
+    newRow[19] = idGroup;             // Kolom T (Id Group)
+    newRow[20] = idUniqInv;           // Kolom U (No Inv Unik)
+
+    // 5. Eksekusi Tulis ke Sheet klien
+    sheetFinance.appendRow(newRow);
+
+  } catch (err) {
+    console.error("Gagal saat memproses logImageActivity: " + err.message);
   }
 }
 

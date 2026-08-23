@@ -587,9 +587,12 @@
         document.getElementById('config-modal').classList.add('hidden');
     }
 
+// BLOK KODE BARU
     function saveSysSettings() {
         const btn = document.getElementById('btn-save-sys');
-        btn.innerText = "Menyimpan..."; btn.disabled = true;
+        // Menyisipkan spinner CSS ke dalam tombol Setting
+        btn.innerHTML = `<div class="flex items-center justify-center gap-2"><div class="spinner-small"></div><span>Menyimpan...</span></div>`;
+        btn.disabled = true;
         
         const getVal = (id) => document.getElementById(id) ? document.getElementById(id).value : "";
         
@@ -952,9 +955,10 @@
         // 2. LOGIKA VALIDASI KETAT
         if (col0Val === "") { showToast("⚠️ Device Name (A) tidak boleh kosong!"); return; }
         if (col1Val === "") { showToast("⚠️ Akun CS (B) tidak boleh kosong!"); return; }
+        // BLOK KODE BARU
         if (col6Val === "") { showToast("⚠️ No Server (G) tidak boleh kosong!"); return; }
-
-        btn.innerText = "Menyimpan..."; 
+        // Menyisipkan spinner CSS ke dalam tombol Device
+        btn.innerHTML = `<div class="flex items-center justify-center gap-2"><div class="spinner-small"></div><span>Menyimpan...</span></div>`; 
         btn.disabled = true;
 
         const rawDate = getVal('dev-col-24');
@@ -987,7 +991,12 @@
                 btn.disabled = false; 
             })
             .withSuccessHandler(function(res) { 
-                showToast(res); closeDevForm(); openControlPanel(); 
+                showToast(res); 
+                closeDevForm(); 
+                // PERBAIKAN: Gunakan openDevicePanel() agar list device ter-refresh dengan benar
+                openDevicePanel(); 
+                
+                // Mengembalikan state tombol
                 btn.innerText = "Simpan Semua Perubahan"; 
                 btn.disabled = false; 
             })
@@ -996,10 +1005,25 @@
 
    
     function closeDevForm() { document.getElementById('dev-modal').classList.add('hidden'); }
-
+    
+    // BLOK KODE BARU
     function deleteDev(idx) {
         if(!confirm("Yakin ingin menghapus device ini permanen?")) return;
-        google.script.run.withSuccessHandler(function(res) { showToast(res); openControlPanel(); }).deleteDeviceFromUI(SHEET_URL, idx);
+        
+        // Memunculkan animasi loading bawaan modal dan menyembunyikan list
+        document.getElementById('config-main').classList.add('hidden');
+        document.getElementById('config-loading').classList.remove('hidden');
+        
+        google.script.run
+            .withFailureHandler(function(err) {
+                showToast("❌ Eror Server: " + err.message);
+                openDevicePanel(); // Refresh UI untuk menghilangkan loading
+            })
+            .withSuccessHandler(function(res) { 
+                showToast(res); 
+                openDevicePanel(); // Refresh UI secara otomatis
+            })
+            .deleteDeviceFromUI(SHEET_URL, idx);
     }
 
     function deleteProfile() {
@@ -1011,8 +1035,10 @@
         }
 
         const btn = document.getElementById('btn-save-profile');
+        // BLOK KODE BARU
         if (btn) {
-            btn.innerText = "Menghapus...";
+            // Menyisipkan spinner CSS ke dalam tombol saat menghapus
+            btn.innerHTML = `<div class="flex items-center justify-center gap-2"><div class="spinner-small"></div><span>Menghapus...</span></div>`;
             btn.disabled = true;
             btn.classList.add('opacity-70');
         }
@@ -1921,7 +1947,9 @@ function openEditModal() {
         const checkboxes = document.querySelectorAll('.label-checkbox:checked');
         const newLabels = Array.from(checkboxes).map(cb => cb.value).join(', ');
 
-        btn.innerText = "Menyimpan...";
+       // BLOK KODE BARU
+        // Menyisipkan spinner CSS ke dalam tombol
+        btn.innerHTML = `<div class="flex items-center justify-center gap-2"><div class="spinner-small"></div><span>Menyimpan...</span></div>`;
         btn.disabled = true;
         btn.classList.add('opacity-70');
 

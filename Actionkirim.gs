@@ -1019,18 +1019,31 @@ var globalAI = {
 /* =========================================================================
    FUNGSI HELPER & AI ENGINE
    ========================================================================= */
-
-function callAI(apiKey, primaryModel, fallbackStr, systemPrompt, userMessage, temp, maxTokens, clientSheetId) { // <-- Tambah parameter di sini
-  var fallbackArr = fallbackStr ? fallbackStr.split("|").map(function(m){ return m.trim(); }) : [];
-  var modelsToTry = [primaryModel].concat(fallbackArr);
+function callAI(apiKey, primaryModel, fallbackStr, systemPrompt, userMessage, temp, maxTokens, clientSheetId) { 
+  // BLOK KODE BARU: Memecah fallbackStr berdasarkan enter (\n), koma (,), atau pipe (|)
+  var fallbackArr = [];
+  if (fallbackStr) {
+    // Regex /[\n|,]/ memecah string setiap ketemu Enter, Koma, atau Pipe
+    fallbackArr = fallbackStr.split(/[\n|,]/).map(function(m) { 
+        return m.trim(); 
+    }).filter(function(m) {
+        return m !== ""; // Buang yang kosong
+    });
+  }
   
+  // Bersihkan juga primaryModel dari spasi/enter nakal
+  var cleanPrimary = primaryModel ? primaryModel.trim().split(/[\n|,]/)[0].trim() : "";
+  
+  var modelsToTry = [cleanPrimary].concat(fallbackArr);
+  
+  // Hapus duplikat dan pastikan tidak ada string kosong
   modelsToTry = modelsToTry.filter(function(item, pos) {
     return modelsToTry.indexOf(item) == pos && item !== "";
   });
 
   var cleanTemp = temp.toString().replace(",", ".");
   var finalTemp = parseFloat(cleanTemp) || 0.7;
-  var finalMaxTokens = parseInt(maxTokens) || 2048; 
+  var finalMaxTokens = parseInt(maxTokens) || 2048;
 
   var payload = { 
     "contents": [{ "role": "user", "parts": [{ "text": "System Instructions: " + systemPrompt + "\n\nUser Message: " + userMessage }] }],

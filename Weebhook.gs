@@ -12,6 +12,12 @@ function doPostLibrary(e, clientSheetId) {
       return ContentService.createTextOutput("NO DATA");
     }
 
+    // TANGKAP PARAMETER URL (Misal: ?device=6285386018255)
+    let urlDevice = null;
+    if (e.parameter && e.parameter.device) {
+        urlDevice = e.parameter.device;
+    }
+
     // 1. Parse data di awal
     let data;
     try {
@@ -32,12 +38,16 @@ function doPostLibrary(e, clientSheetId) {
     
     // Toleransi pembacaan teks pesan (Onesender terkadang menggunakan data.text)
     let pesanTeks = String(data.message || data.message_text || data.text || "").trim().toLowerCase();
+    
+    // Kunci Command: Hanya sah jika pesannya persis "/group_id"
+    let isGroupIdCommand = (pesanTeks === "/group_id");
 
     // --- FITUR MENDAPATKAN JID GRUP ---
-    if (isGroup && pesanTeks === "/group_id") {
-        
+    // Gunakan isGroupIdCommand sebagai syarat pembuka gerbang
+    if (isGroup && isGroupIdCommand) {
         // 1. Ekstrak JID Grup secara Universal (Support Starsender v2 group_jid)
         let groupId = data.group_jid || data.chat || data.group_id || (data.is_me ? data.to : data.from);
+        
         if (groupId && !String(groupId).includes("@g.us")) {
             groupId = String(groupId) + "@g.us";
         }
@@ -47,7 +57,7 @@ function doPostLibrary(e, clientSheetId) {
 
         // A. CATAT KE SHEET LOG SECARA PAKSA
         try {
-            const ss = SpreadsheetApp.openById(clientSheetId); // <-- Buka khusus spreadsheet klien
+            const ss = SpreadsheetApp.openById(clientSheetId);
             let sheetLog = ss.getSheetByName("LOG");
             if (!sheetLog) {
                 sheetLog = ss.insertSheet("LOG");
@@ -57,28 +67,25 @@ function doPostLibrary(e, clientSheetId) {
         } catch (logErr) {
             console.error("Gagal nulis sheet LOG: " + logErr.message);
         }
-        
+
         // B. BALAS KE WHATSAPP (VIA API UNIVERSAL)
         let nomorBot = String(data.to || data.receiver || "").replace(/\D/g, "");
         if (!nomorBot || nomorBot.length < 5) {
             nomorBot = String(data.device || "").split("-").pop().replace(/\D/g, "");
         }
-        
+
         try {
-            const config = getInitializationData(nomorBot, false, clientSheetId); 
+            const config = getInitializationData(nomorBot, false, clientSheetId);
             if (config.device.waKey && config.device.waUrl) {
-                
                 let replyMessage = "WhatsApp ID:\n`" + groupId + "`";
-                
-                // PAYLOAD SAKTI: Menggabungkan kunci Starsender dan Onesender sekaligus
                 let universalPayload = {
-                    "tujuan": groupId,       // Parameter khusus Starsender
-                    "pesan": replyMessage,   // Parameter khusus Starsender
-                    "phone": groupId,        // Parameter khusus Onesender
-                    "message": replyMessage, // Parameter khusus Onesender
-                    "to": groupId,           // Parameter alternatif provider lain
-                    "text": replyMessage,    // Parameter alternatif provider lain
-                    "isGroup": true          // Flag wajib untuk beberapa provider jika kirim ke grup
+                    "tujuan": groupId, 
+                    "pesan": replyMessage, 
+                    "phone": groupId, 
+                    "message": replyMessage, 
+                    "to": groupId, 
+                    "text": replyMessage, 
+                    "isGroup": true 
                 };
 
                 UrlFetchApp.fetch(config.device.waUrl, {
@@ -94,20 +101,20 @@ function doPostLibrary(e, clientSheetId) {
         } catch (e) {
             console.error("Gagal membalas API: " + e.message);
         }
-        
-        // 1. HAPUS RETURN DISINI AGAR EKSEKUSI TERUS BERJALAN KE SHEET NETWORKING
-        // return ContentService.createTextOutput("GROUP_ID_PROCESSED");
     }
-    // ---------------------------------------------------------------------------------
 
+    // ---------------------------------------------------------------------------------
     let isNewsletter = String(data.sender_lid || data.sender || "").includes("@newsletter");
     let isSticker = data.message_type === "sticker" || (data.message && data.message.message_type === "sticker");
     let isBroadcast = String(data.chat || data.to_id || data.from_id || "").includes("@broadcast");
     let isDuplicatePayload = (data.apiUrl === undefined && data.message_id === undefined);
 
-    // 2. MODIFIKASI FILTER: Jika dari Grup TAPI pesannya BUKAN "/group_id", baru dibuang (Ignored)
-    if ((isGroup && pesanTeks !== "/group_id") || isNewsletter || isSticker || isBroadcast || isDuplicatePayload) {
-      return ContentService.createTextOutput("IGNORED");
+    // 2. MODIFIKASI FILTER: Bypass pesan dari grup HANYA JIKA perintah valid
+    let isFinanceCommand = pesanTeks.startsWith("/finance");
+    
+    // Perbaikan: Tolak pesan grup jika bukan isGroupIdCommand (Admin) dan bukan isFinanceCommand
+    if ((isGroup && !isGroupIdCommand && !isFinanceCommand) || isNewsletter || isSticker || isBroadcast || isDuplicatePayload) {
+        return ContentService.createTextOutput("IGNORED");
     }
 
     // 3. Kunci eksekusi
@@ -115,9 +122,10 @@ function doPostLibrary(e, clientSheetId) {
     try {
       lock.tryLock(10000);
       if (data.apiUrl !== undefined && data.payload !== undefined) {
-        return processUIPost(data, clientSheetId); // <-- Lempar ID
+        return processUIPost(data, clientSheetId); 
       } else {
-        return processWebhook(data, clientSheetId); // <-- Lempar ID
+        // LEMPAR urlDevice KE FUNGSI processWebhook
+        return processWebhook(data, clientSheetId, urlDevice); 
       }
     } catch (err) {
       console.error("ROUTER ERROR: " + err.message);
@@ -243,7 +251,7 @@ function updateContactData(sheetInput, uniqueId, newName, newLabels, newBiodata)
       if (data[i][1] == uniqueId) { 
         sheetInbox.getRange(i + 1, 8).setValue(newName); 
         sheetInbox.getRange(i + 1, 3).setValue(newLabels);
-        sheetInbox.getRange(i + 1, 9).setValue(newBiodata);
+        sheetInbox.getRange(i + 1, 10).setValue(newBiodata);
         return "success";
       }
     }
@@ -279,7 +287,8 @@ function pancingIzin() {
 // =========================================================================
 // BAGIAN 3: FUNGSI INTI WEBHOOK (V6.0 LIGHTWEIGHT)
 // =========================================================================
-function processWebhook(data, clientSheetId) { // <-- Tambah Parameter
+// Tambahkan parameter urlDevice (default null jika tidak diisi)
+function processWebhook(data, clientSheetId, urlDevice = null) { 
   try {
     let mappedData = {}, bsuid = "";
 
@@ -288,13 +297,15 @@ function processWebhook(data, clientSheetId) { // <-- Tambah Parameter
 
     // 1. PARSING DATA (Dukung format V1 & V2 termasuk Starsender)
     if (data.version || data.message_timestamp) {
-      let myNumNorm = normalizePhone(data.is_from_me ? data.sender_phone : data.to_id);
+      // JIKA urlDevice ADA, UTAMAKAN ITU. JIKA TIDAK, PAKAI DATA DARI JSON.
+      let myNumNorm = urlDevice ? normalizePhone(urlDevice) : normalizePhone(data.is_from_me ? data.sender_phone : data.to_id);
+      
       bsuid = String(data.sender_lid || "");
       let lampiranUrl = data.attachment_url || data.file || "";
       
       mappedData = {
         nomor_device: myNumNorm, from: normalizePhone(data.sender_phone || data.from || ""),
-        is_group: isPesanGrup, is_me: data.is_from_me || false, // <-- Gunakan deteksi universal
+        is_group: isPesanGrup, is_me: data.is_from_me || false,
         message: data.message_text || data.message || "", message_id: data.message_id || "",
         push_name: !data.is_from_me ? String(normalizePushName(data?.sender_push_name) || ""): "",
         received_at: formatTime(data.message_timestamp), tglformat: getOnlyDate(data.message_timestamp),
@@ -303,13 +314,15 @@ function processWebhook(data, clientSheetId) { // <-- Tambah Parameter
         message_type: data.message_type || (lampiranUrl ? "media" : "text")
       };
     } else {
+      // LAKUKAN HAL YANG SAMA UNTUK FORMAT LAMA
+      let myNumNorm = urlDevice ? normalizePhone(urlDevice) : normalizePhone(data.is_me ? data.from : data.to);
+      
       bsuid = String(data.sender || ""); 
-      let myNumNorm = normalizePhone(data.is_me ? data.from : data.to);
       let lampiranUrl = data.file || data.attachment_url || "";
       
       mappedData = {
         nomor_device: myNumNorm, from: normalizePhone(data.from || ""),
-        is_group: isPesanGrup, is_me: data.is_me || false, // <-- Gunakan deteksi universal
+        is_group: isPesanGrup, is_me: data.is_me || false,
         message: data.message || data.text || "", message_id: data.message_id || "",
         push_name: !data.is_me ? String(normalizePushName(data?.push_name) || ""): "",
         received_at: formatTime(data.received_at), tglformat: getOnlyDate(data.received_at),
@@ -324,13 +337,14 @@ function processWebhook(data, clientSheetId) { // <-- Tambah Parameter
     // =========================================================================
     let isiPesanFilter = String(mappedData.message).trim().toLowerCase();
     
-    // KEMBALIKAN @g.us YANG TERPOTONG KHUSUS UNTUK /group_id
-    if (mappedData.is_group && isiPesanFilter === "/group_id") {
+    let isFinanceProcess = isiPesanFilter.startsWith("/finance");
+
+    // KEMBALIKAN @g.us YANG TERPOTONG KHUSUS UNTUK /group_id DAN /finance
+    if (mappedData.is_group && (isiPesanFilter === "/group_id" || isFinanceProcess)) {
         let fullGroupId = data.group_jid || data.chat || data.group_id || (mappedData.is_me ? data.to : data.from);
         if (fullGroupId && !String(fullGroupId).includes("@g.us")) {
             fullGroupId = String(fullGroupId) + "@g.us";
         }
-        
         // Timpa value to/from yang terpotong dengan ID grup utuh
         if (mappedData.is_me) {
             mappedData.to = fullGroupId;
@@ -339,9 +353,8 @@ function processWebhook(data, clientSheetId) { // <-- Tambah Parameter
         }
     }
 
-    // Jika pesan dari grup DAN isinya BUKAN /group_id, maka tolak. 
-    // Artinya jika isinya "/group_id", 'tolakGrup' bernilai false (dibiarkan lolos ke Networking)
-    let tolakGrup = mappedData.is_group && isiPesanFilter !== "/group_id";
+    // Tolak pesan grup KECUALI isinya "/group_id" ATAU diawali "/finance"
+    let tolakGrup = mappedData.is_group && isiPesanFilter !== "/group_id" && !isFinanceProcess;
 
     // Filter Penjaga Kedua
     if (bsuid.toLowerCase().includes("@newsletter") || tolakGrup || (mappedData.message_type || "").toLowerCase() === "sticker") {
@@ -387,11 +400,24 @@ function processWebhook(data, clientSheetId) { // <-- Tambah Parameter
       }
     }
 
-    // 4. LABEL & DATA PREP
+   // 4. LABEL & DATA PREP
     let cleanMsg = String(mappedData.message || "").trim().toUpperCase();
     let keywords = String(config.labelwa || "").split(/[,|;]/).map(k => k.trim().toUpperCase()).filter(Boolean);
     let foundKeywordsArr = [];
-    for (let kw of keywords) { if (new RegExp("\\b" + kw + "\\b").test(cleanMsg)) foundKeywordsArr.push(kw); }
+    
+    for (let kw of keywords) { 
+        if (new RegExp("\\b" + kw + "\\b").test(cleanMsg)) {
+            
+            // --- BLOK KODE BARU: PENGAMAN AUTO-LABEL ---
+            // Cegah sistem memberikan label "FINANCE" secara otomatis 
+            // akibat membaca kata dari perintah komando /finance
+            if (kw === "FINANCE" && cleanMsg.startsWith("/FINANCE")) {
+                continue; // Lewati siklus ini (Jangan ditambahkan ke array)
+            }
+            
+            foundKeywordsArr.push(kw); 
+        } 
+    }
 
     let finalC = "", finalH = "", finalI = oldData ? (oldData.biodata || "") : "";
 
@@ -507,7 +533,13 @@ if (mappedData.file_url) {
     let ext = fullUrl.split('.').pop().split(/\#|\?/)[0];
     if (ext.length > 4 || ext.length < 2) ext = "jpg";
     
-    namaFile = mappedData.tglformat + "_" + uniqueIdB + "." + ext; // <--- PERBAIKAN 2: Hapus awalan 'let' agar nilainya terlempar ke scope global
+    // --- BLOK KODE BARU: ANTI DUPLIKAT NAMA FILE ---
+    // Membuat stempel waktu absolut berformat YYMMDDHHmmss (Contoh: 260824124739)
+    let timeStampUnik = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyMMddHHmmss");
+    
+    // Format baru: idTanggal_NomorWADevice_Timestamp.jpg
+    // Contoh output: id260824_6285386018255.Server_260824124739.jpg
+    namaFile = mappedData.tglformat + "_" + uniqueIdB + "_" + timeStampUnik + "." + ext; 
       
       imagePipelineLogs.push("URL TARGET: " + fullUrl);
 
@@ -592,16 +624,35 @@ if (!textForFinance) textForFinance = mappedData.message || "";
 textForFinance = String(textForFinance).trim();
 
 // Cek apakah perintah diawali dengan /finance (Case Insensitive)
-let isManualFinance = textForFinance.toUpperCase().startsWith("/FINANCE");
+    let isManualFinance = textForFinance.toUpperCase().startsWith("/FINANCE");
 
-if (isManualFinance) {
-    // Fungsi mungil untuk mengekstrak nilai berdasarkan kata kunci di pesan WA
-    let getVal = (key) => {
-        let regex = new RegExp(key + "\\s*[:=]\\s*(.+)", "i");
+    if (isManualFinance) {
+        
+        // --- BLOK KODE BARU: SECURITY GATE GLOBAL (GRUP & INDIVIDU) ---
+        // Memeriksa apakah ID terdaftar di Networking (oldData) DAN memiliki label 'FINANCE' (finalC)
+        let hasFinanceLabel = String(finalC).toUpperCase().includes("FINANCE");
+        
+        if (!oldData || !hasFinanceLabel) {
+            // Jika ID tidak terdaftar atau tidak punya label finance, tolak secara diam-diam
+            // Aturan ini mengamankan dari chat individu iseng maupun dari grup tak berizin
+            return ContentService.createTextOutput("IGNORED_UNAUTHORIZED_FINANCE");
+        }
+        // --- AKHIR SECURITY GATE ---
+
+        // Fungsi mungil untuk mengekstrak nilai secara aman walau agen membiarkannya kosong
+        let getVal = (key) => {
+        let regex = new RegExp(key + "\\s*[:=]\\s*(.*)", "i");
         let match = textForFinance.match(regex);
         return match ? match[1].trim() : "";
     };
 
+    let valStatus       = getVal("Status");
+    // TAMBAHAN: Tangkap nilai Nama, WA, Akun, dan Agen dari ketikan Agen
+    let valNamaKonsumen = getVal("Nama Konsumen") || getVal("Pelanggan"); 
+    let valNoWA         = getVal("No WA") || getVal("WA") || getVal("Nomor WA");
+    let valAkun         = getVal("Akun");
+    let valAgen         = getVal("Agen");
+    
     let valJenis    = getVal("Jenis");
     let valKategori = getVal("Kategori");
     let valTgl      = getVal("Tgl Transaksi") || getVal("Tanggal");
@@ -610,22 +661,48 @@ if (isManualFinance) {
     let valSatuan   = getVal("Satuan");
     let valHarga    = getVal("Harga Satuan") || getVal("Harga");
     let valTotal    = getVal("Total");
-    let valStatus   = getVal("Status");
 
-    // Hapus titik pemisah ribuan agar masuk ke Sheet murni sebagai angka
-    if (valHarga) valHarga = valHarga.replace(/\./g, "");
-    if (valTotal) valTotal = valTotal.replace(/\./g, "");
+    // --- PEMBERSIHAN ANGKA MURNI (Data Sanitization) ---
+    // Gunakan \D untuk menghapus SEMUA karakter selain angka (Titik, Koma, Spasi, Huruf, Strip dll)
+    if (valQty)   valQty   = valQty.replace(/\D/g, "");
+    if (valHarga) valHarga = valHarga.replace(/\D/g, "");
+    if (valTotal) valTotal = valTotal.replace(/\D/g, "");
 
-    // 2. Susun format array string (pakai double titik koma) agar diproses mulus oleh logImageActivity
-    // Urutan: Jenis;;Kategori;;Tgl Transaksi;;Nama Item;;Qty;;Satuan;;Harga Satuan;;Total
-    let manualDataCSV = valJenis + ";;" + valKategori + ";;" + valTgl + ";;" + valNamaItem + ";;" + valQty + ";;" + valSatuan + ";;" + valHarga + ";;" + valTotal+ ";;" + valStatus ;
+    // --- LOGIKA OVERRIDE DATA DEFAULT ---
+    
+    // 1. Override Nama Konsumen HANYA untuk Sheet Finance (Variabel Bayangan)
+    let finalNamaKonsumen = finalH; 
+    if (valNamaKonsumen) {
+        finalNamaKonsumen = valNamaKonsumen; 
+    }
+
+    // 2. Override ID Networking menggunakan variabel bayangan
+    let finalUniqueIdB = uniqueIdB; 
+    if (valNoWA) {
+        let cleanWA = valNoWA.replace(/\D/g, "");
+        if (cleanWA.startsWith("0")) {
+            cleanWA = "62" + cleanWA.substring(1);
+        } else if (cleanWA.startsWith("8")) {
+            cleanWA = "62" + cleanWA;
+        }
+        finalUniqueIdB = cleanWA + "." + finalColD;
+    }
+
+    // 3. Override Akun dan Agen HANYA untuk Sheet Finance (Variabel Bayangan)
+    // Jika di WA tidak diketik 'Akun = ...' maka gunakan default (namaAkun)
+    let finalAkunFinance = valAkun ? valAkun : namaAkun;
+    let finalAgenFinance = valAgen ? valAgen : finalColD;
+
+    // 4. Susun format array string (pakai double titik koma)
+    let manualDataCSV = valJenis + ";;" + valKategori + ";;" + valTgl + ";;" + valNamaItem + ";;" + valQty + ";;" + valSatuan + ";;" + valHarga + ";;" + valTotal + ";;" + valStatus;
 
     let logTambahan = "Input Manual via /finance\n" + imagePipelineLogs.join("\n");
 
-    // 3. Eksekusi penulisan ke Sheet Finance (Fungsi Master Handle)
-    logImageActivity(uniqueIdB, logTambahan, driveLink, manualDataCSV, finalColD, namaAkun, finalH, clientSheetId, mappedData, namaFile, textForFinance);
+    // 5. Eksekusi penulisan ke Sheet Finance
+    // PERBAIKAN: Lempar 'finalAgenFinance' dan 'finalAkunFinance' untuk menimpa 'finalColD' dan 'namaAkun'
+    logImageActivity(finalUniqueIdB, logTambahan, driveLink, manualDataCSV, finalAgenFinance, finalAkunFinance, finalNamaKonsumen, clientSheetId, mappedData, namaFile, textForFinance);
 
-    // 4. Kunci proses lanjutan agar AI tidak ter-trigger dan tidak membalas pesan ini
+    // 6. Kunci proses lanjutan agar AI tidak ter-trigger dan tidak membalas pesan ini
     finalAiLabel = mappedData.is_me ? "Admin Reply" : "Stop"; 
     finalAiLog = "Processed Manual Finance";
     updateKolomY = true;
@@ -1311,40 +1388,64 @@ function logImageActivity(uniqueIdB, pipelineLog, driveLink, aiExtractedData, ag
     const notePesan = captionText ? String(captionText).trim() : "";
     
     // Perbaikan ID Group jika dari mappedData kurang akurat
-    let idGroup = "";
-    if (mappedData && mappedData.is_group) {
-        idGroup = mappedData.from || mappedData.to || "";
-    }
-    const namaFileFull = "Finance_Images/" + (namaFile || "Unknown.jpg");
+   let idGroup = "";
+   let namaGrup = ""; // Variabel penampung Nama Grup
+   
+   if (mappedData && mappedData.is_group) {
+       idGroup = mappedData.from || mappedData.to || "";
+       
+       // --- PENCARIAN NAMA GRUP (VLOOKUP INSTAN) ---
+       if (idGroup) {
+           const sheetNet = ss.getSheetByName("Networking");
+           if (sheetNet) {
+               // createTextFinder bekerja secepat kilat (0ms) tanpa perlu memuat seluruh isi sheet ke RAM
+               const found = sheetNet.createTextFinder(idGroup).matchEntireCell(false).findNext();
+               if (found) {
+                   // Jika ketemu, ambil nilai dari Kolom H (Indeks 8 = Nama Lengkap/Panggilan)
+                   namaGrup = sheetNet.getRange(found.getRow(), 8).getValue();
+               }
+           }
+       }
+   }
+   
+   // --- BLOK KODE BARU: ANTI NAMA FILE PALSU ---
+   const namaFileFull = driveLink ? "Finance_Images/" + (namaFile || "Unknown.jpg") : "";
 
-    // 4. Susun Array untuk satu kali penulisan massal (appendRow)
-    let newRow = [];
-    newRow[0] = Utilities.formatDate(d, tz, "dd/MM/yyyy HH:mm:ss"); // Kolom A
-    newRow[1] = akun; // Kolom B
-    newRow[2] = agen;  // Kolom C
-    newRow[3] = uniqueIdB; // Kolom D
-    newRow[4] = namaKonsumen; // Kolom E
-    newRow[5] = statusFinance;  // Kolom F (Status statis) 
-    newRow[6] = jenis;  // Kolom G
-    newRow[7] = kategori; // Kolom H
-    newRow[8] = tglTransaksiAI; // Kolom I  (Tgl Transaksi dari Vision)
-    newRow[9] = namaItem; // Kolom J
-    newRow[10] = qty; // Kolom K
-    newRow[11] = satuan; // Kolom L
-    newRow[12] = harga; // Kolom M
-    newRow[13] = total; // Kolom N
-    
-    // --- PENAMBAHAN REQUEST BARU --- 
-    newRow[14] = notePesan;   // Kolom O (Note)
-    newRow[15] = idGroup;     // Kolom P 
-    newRow[16] = idUniqInv;   // Kolom Q (No Inv Unik)
-    newRow[17] = driveLink;   // Kolom R 
-    newRow[18] = namaFileFull; // Kolom S (Nama File) 
-    newRow[19] = pipelineLog;  // Kolom T  
-    newRow[20] = formatBulan;  // Kolom U (Bulan) 
+   // 4. Susun Array untuk satu kali penulisan massal (appendRow)
+   let newRow = [];
+   newRow[0] = Utilities.formatDate(d, tz, "dd/MM/yyyy HH:mm:ss"); // Kolom A
+   newRow[1] = akun; // Kolom B
+   newRow[2] = agen;  // Kolom C
+   newRow[3] = uniqueIdB; // Kolom D
+   newRow[4] = namaKonsumen; // Kolom E
+   newRow[5] = statusFinance;  // Kolom F (Status)
+   newRow[6] = jenis;  // Kolom G
+   newRow[7] = kategori; // Kolom H
+   newRow[8] = tglTransaksiAI; // Kolom I 
+   newRow[9] = namaItem; // Kolom J
+   newRow[10] = qty; // Kolom K
+   newRow[11] = satuan; // Kolom L
+   newRow[12] = harga; // Kolom M
+   newRow[13] = total; // Kolom N
+  
+   // --- PERGESERAN ARRAY KOLOM O SAMPAI Z ---
+   newRow[14] = notePesan;    // Kolom O (Note)
+   newRow[15] = idGroup;      // Kolom P (ID Grup)
+   newRow[16] = namaGrup;     // Kolom Q (Nama Grup) <--- BARU MASUK SINI
+   newRow[17] = idUniqInv;    // Kolom R (No Inv Unik)
+   newRow[18] = driveLink;    // Kolom S (Link Drive)
+   newRow[19] = namaFileFull; // Kolom T (Nama File)
+   newRow[20] = pipelineLog;  // Kolom U (Proses AI) 
+   newRow[21] = formatBulan;  // Kolom V (Bulan)
 
-    // 5. Eksekusi Tulis ke Sheet klien
-    sheetFinance.appendRow(newRow);
+   // --- PERSIAPAN DATABASE UNTUK UI OMNICHANNEL ---
+   // newRow[22] = "";    // Kolom W (Metode Pembayaran)
+   // newRow[23] = "";    // Kolom X (Tgl Verifikasi)
+   // newRow[24] = "";    // Kolom Y (Verifikator)
+   // newRow[25] = false; // Kolom Z (Is_Deleted) default false
+
+   // 5. Eksekusi Tulis ke Sheet klien
+   sheetFinance.appendRow(newRow);
 
   } catch (err) {
     console.error("Gagal saat memproses logImageActivity: " + err.message);

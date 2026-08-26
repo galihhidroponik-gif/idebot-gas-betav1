@@ -1651,3 +1651,128 @@ function verifyLogin(sheetUrl, user, pass) {
     return { success: false, msg: "Error Server: " + e.message };
   }
 }
+
+// =========================================================================
+// [OPTIMASI] FUNGSI CRM RFM & LOGGING KE KOLOM C & J (JALANKAN 1X SEHARI)
+// =========================================================================
+function dailyCRMSync(clientSheetId) {
+  var lock = LockService.getDocumentLock();
+  if (!lock.tryLock(15000)) return;
+
+  try {
+    var ss = clientSheetId ? SpreadsheetApp.openById(clientSheetId) : SpreadsheetApp.getActiveSpreadsheet();
+    var sheetNet = ss.getSheetByName("Networking");
+    var sheetFin = ss.getSheetByName("Finance");
+    
+    if (!sheetNet || !sheetFin) return;
+
+    // 1. Tarik Seluruh Data Finance ke Memori RAM
+    var finData = sheetFin.getDataRange().getValues();
+    if (finData.length <= 1) return;
+
+    var rfmMap = {}; 
+    var today = new Date();
+    today.setHours(0,0,0,0);
+
+    // Format Tanggal untuk Log RFM (Contoh: 24/8)
+    var dayStr = today.getDate();
+    var monthStr = today.getMonth() + 1;
+    var rfmDateTag = "[RFM " + dayStr + "/" + monthStr + "]";
+
+    // 2. Agregasi Data dari Sheet Finance (Mulai dari baris ke-2)
+    for (var i = 1; i < finData.length; i++) {
+      var uniqId = String(finData[i][3]).trim(); // Kolom D: ID Networking
+      var status = String(finData[i][5]).toLowerCase().trim(); // Kolom F: Status
+      
+      // PERBAIKAN BUG: "pemasukan" ditulis dengan huruf kecil karena status sudah di-toLowerCase()
+      // Filter hanya transaksi yang sah (Lunas / Pemasukan / Done)
+      if (!uniqId || (status !== "lunas" && status !== "pemasukan" && status !== "done")) continue;
+
+      var rawTgl = finData[i][8] || finData[i][0]; // Kolom I (Tgl Transaksi) atau Kolom A
+      var tglTrans = new Date(rawTgl);
+      var nominal = parseFloat(String(finData[i][13]).replace(/\D/g, '')) || 0; // Kolom N: Total
+
+      if (!rfmMap[uniqId]) {
+        rfmMap[uniqId] = { freq: 0, monetary: 0, lastDate: new Date(0) };
+      }
+      
+      rfmMap[uniqId].freq += 1;
+      rfmMap[uniqId].monetary += nominal;
+      if (tglTrans > rfmMap[uniqId].lastDate) {
+        rfmMap[uniqId].lastDate = tglTrans;
+      }
+    }
+
+    // 3. Tarik Data Networking ke Memori RAM
+    var netData = sheetNet.getDataRange().getValues();
+    
+    // Indeks Kolom Networking (Berbasis 0): Kolom C = Index 2, Kolom J (Keterangan) = Index 9
+    var colLabelIdx = 2; 
+    var colBiodataIdx = 9; 
+
+    // 4. Update data hanya untuk ID yang terdaftar melakukan transaksi di Finance
+    for (var j = 1; j < netData.length; j++) {
+      var idNet = String(netData[j][1]).trim(); // Kolom B: ID
+      
+      // SKIPPING: Jika ID tidak pernah transaksi di Finance, lewati untuk hemat proses
+      if (!idNet || !rfmMap[idNet]) continue;
+
+      var stats = rfmMap[idNet];
+      var diffDays = Math.floor((today - stats.lastDate) / (1000 * 60 * 60 * 24));
+      if (diffDays < 0) diffDays = 0;
+
+      var rVal = diffDays;
+      var fVal = stats.freq;
+      var mVal = stats.monetary;
+
+      // --- LOGIKA SKOR RFM & LABEL ---
+      var rScore = 1, fScore = 1, mScore = 1;
+      if (diffDays <= 14) rScore = 5; else if (diffDays <= 30) rScore = 4; else if (diffDays <= 60) rScore = 3; else if (diffDays <= 120) rScore = 2; else rScore = 1;
+      if (stats.freq >= 10) fScore = 5; else if (stats.freq >= 5) fScore = 4; else if (stats.freq >= 3) fScore = 3; else if (stats.freq == 2) fScore = 2; else fScore = 1;
+      if (stats.monetary >= 10000000) mScore = 5; else if (stats.monetary >= 5000000) mScore = 4; else if (stats.monetary >= 1000000) mScore = 3; else if (stats.monetary >= 250000) mScore = 2; else mScore = 1;
+
+      var newCrmLabel = "";
+      if (rScore >= 4 && fScore >= 4) newCrmLabel = "CRM_CHAMPION";
+      else if (fScore >= 3) {
+          if (rScore >= 3) newCrmLabel = "CRM_LOYAL";
+          else newCrmLabel = "CRM_AT_RISK";
+      } else if (fScore <= 2 && rScore >= 3) newCrmLabel = "CRM_POTENTIAL";
+      else newCrmLabel = "CRM_SLEEPING";
+
+      // A. Update Label WA (Kolom C)
+      var currentLabels = String(netData[j][colLabelIdx]).toUpperCase();
+      var labelArr = currentLabels.split(",").map(function(s){ return s.trim(); })
+                      .filter(function(l) { return l !== "" && !l.startsWith("CRM_"); });
+      labelArr.unshift(newCrmLabel); // Taruh label CRM di baris/urutan pertama
+      netData[j][colLabelIdx] = labelArr.join(", ");
+
+      // B. Update Keterangan (Kolom J) dengan Log System
+      var currentBiodata = String(netData[j][colBiodataIdx] || "").trim();
+      var bioLines = currentBiodata ? currentBiodata.split("\n") : [];
+      
+      // Format baris baru RFM: "~ [RFM 24/8] 37,3,5000000"
+      var newRfmLine = "~ " + rfmDateTag + " " + rVal + "," + fVal + "," + mVal;
+
+      // Cek apakah baris pertama sudah mengandung tag [RFM ...]
+      if (bioLines.length > 0 && bioLines[0].includes("[RFM")) {
+          // Overwrite baris ke-1 dengan data terbaru
+          bioLines[0] = newRfmLine;
+      } else {
+          // Jika belum ada, pindahkan catatan lama ke baris 2, lalu tulis baris 1
+          bioLines.unshift(newRfmLine);
+      }
+
+      netData[j][colBiodataIdx] = bioLines.join("\n");
+    }
+
+    // 5. Tulis Kembali ke Spreadsheet Secara Massal (Batch Update - Sangat Cepat)
+    sheetNet.getRange(1, 1, netData.length, netData[0].length).setValues(netData);
+    
+    Logger.log("✅ Sinkronisasi RFM & Log Kolom J Selesai!");
+
+  } catch (e) {
+    Logger.log("❌ Error CRM Sync: " + e.message);
+  } finally {
+    lock.releaseLock();
+  }
+}

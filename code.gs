@@ -24,6 +24,7 @@
  *   - Klik Deploy dan salin (copy) "Web app URL" yang muncul.
  * 
  * STEP 5: PASANG WEBHOOK
+ *   - Paste URL Web App dari Step 4 ke sheet setting B2 (URL WEEBHOOK)
  *   - Paste URL Web App dari Step 4 ke menu Webhook di dashboard Starsender atau OneSender.
  * 
  * STEP 6: TEST KONEKSI PENGIRIMAN PESAN
@@ -129,29 +130,6 @@ function cekDanIsiOtomatisB2() {
   }
 }
 
-function autoIsiURLWebApp() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-  var sheetSetting = ss.getSheetByName("Setting"); // Atau ganti nama sheet tujuannya
-  
-  if (sheetSetting) {
-    var cellA2 = sheetSetting.getRange("A2");
-    
-    try {
-      // Mengambil URL Web App secara otomatis dari script yang aktif
-      var webAppUrl = ScriptApp.getService().getUrl();
-      
-      if (webAppUrl) {
-        cellA2.setValue(webAppUrl);
-        Logger.log("URL Web App berhasil diperbarui otomatis ke A2: " + webAppUrl);
-      } else {
-        Logger.log("URL Web App belum tersedia. Pastikan project sudah di-deploy sebagai Web App.");
-      }
-    } catch (e) {
-      Logger.log("Gagal mengambil URL: " + e.message);
-    }
-  }
-}
-
 // =========================================================================
 // JEMBATAN PENGHUBUNG UI HTML (JALUR DATA BACKEND)
 // =========================================================================
@@ -240,4 +218,16 @@ function deleteContactData(sheetUrl, contactId) {
 
 function verifyLoginNative(sheetInput, user, pass) { 
   return OmniBot.verifyLogin(sheetInput, user, pass); 
+}
+
+// [BARU] Trigger Harian untuk Kalkulasi CRM & RFM
+function runDailyCRMSync() {
+ // PENGAMAN: Cek apakah library sudah terpasang
+ if (typeof OmniBot === 'undefined') {
+   var errorMsg = "❌ LIBRARY BELUM TERPASANG: Anda belum memiliki IDs Library OmniBot. Silakan hubungi admin idekreatifa 089509063690";
+   Logger.log(errorMsg);
+   throw new Error(errorMsg);
+ }
+ // Mengeksekusi fungsi CRM dari Library Master dengan mengirimkan ID Sheet Klien
+ return OmniBot.dailyCRMSync(CLIENT_SHEET_ID);
 }

@@ -104,6 +104,11 @@
         input:checked + .slider:before { transform: translateX(14px); }
         .switch-orange input:checked + .slider { background-color: #f97316; }
         .switch-blue input:checked + .slider { background-color: #3b82f6; }
+
+        /* Sembunyikan scrollbar untuk area horizontal di header */
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
     </style>
 </head>
 <body>
@@ -242,24 +247,57 @@
     </div>
 
     <div class="chat-area" id="chat-container">
-        <div id="active-header" class="bg-[#008069] p-3 text-white flex items-center gap-3 z-10 shadow-md">
-            <button onclick="closeChat()" class="md:hidden p-1 mr-[-8px]">
-                <svg width="24" height="24" fill="currentColor" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M15 8a.5.5 0 0 0-.5-.5H2.707l3.147-3.146a.5.5 0 1 0-.708-.708l-4 4a.5.5 0 0 0 0 .708l4 4a.5.5 0 0 0 .708-.708L2.707 8.5H14.5A.5.5 0 0 0 15 8z"/></svg>
+       <!-- HEADER OMNICHANNEL REFACTOR: 3-ROW CLEAN DESIGN -->
+        <div id="active-header" class="bg-[#008069] px-3 py-2 text-white flex items-center gap-2 sm:gap-3 z-10 shadow-md h-auto min-h-[60px] border-b border-green-800/30 transition-all duration-200">
+            <button onclick="closeChat()" class="md:hidden p-1 mr-[-4px] shrink-0 hover:bg-white/10 rounded-full transition-colors">
+                <svg width="22" height="22" fill="currentColor" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M15 8a.5.5 0 0 0-.5-.5H2.707l3.147-3.146a.5.5 0 1 0-.708-.708l-4 4a.5.5 0 0 0 0 .708l4 4a.5.5 0 0 0 .708-.708L2.707 8.5H14.5A.5.5 0 0 0 15 8z"/></svg>
             </button>
-            <div id="chat-avatar" onclick="openEditModal()" class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg border border-white/20 cursor-pointer hover:opacity-80 transition-opacity shadow-sm ring-2 ring-transparent hover:ring-white/50" title="Edit Profil">?</div>
-            <div class="flex-1 min-w-0">
-                <div class="flex items-center gap-2">
-                    <div id="chat-name" class="font-bold truncate leading-tight">Pilih Kontak</div>
-                    <!-- Tombol Edit Baru -->
-                    <button onclick="openEditModal()" class="text-white hover:text-gray-200 cursor-pointer flex items-center justify-center" title="Edit Profil">
-                        <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z"/></svg>
+            
+            <div id="chat-avatar" onclick="openEditModal()" class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg border border-white/20 cursor-pointer hover:opacity-80 transition-opacity shadow-sm shrink-0" title="Edit Profil">?</div>
+            
+            <!-- Kontainer Kolom (Stacking 3 Baris Proporsional) -->
+            <div class="flex-1 min-w-0 flex flex-col justify-center gap-0.5 w-full overflow-hidden">
+                
+                <!-- Baris 1: Nama, Edit, Badges (Scroll Horizontal, Rapat Kiri) -->
+                <div class="flex items-center justify-start gap-1.5 w-full overflow-x-auto no-scrollbar whitespace-nowrap pb-0.5">
+                    <div id="chat-name" class="font-bold truncate leading-tight text-[14px] sm:text-[15px] shrink-0">Pilih Kontak</div>
+                    <button onclick="openEditModal()" class="text-white/80 hover:text-white shrink-0 cursor-pointer" title="Edit Profil">
+                        <svg width="12" height="12" fill="currentColor" viewBox="0 0 16 16"><path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z"/></svg>
+                    </button>
+                    <!-- Wadah Badges Label (Dihapus class penarik kanan, kini alami merapat ke kiri) -->
+                    <div id="chat-badges" class="flex items-center gap-1 pr-1 shrink-0"></div>
+                </div>
+                
+                <!-- Baris 2: ID WA & RFM (Rapat Kiri) -->
+                <div class="flex items-center justify-start gap-1.5 text-[9px] sm:text-[10px] text-green-50 overflow-x-auto no-scrollbar whitespace-nowrap w-full">
+                    <!-- Kotak ID & Copy -->
+                    <div class="flex items-center gap-1 bg-black/15 px-1.5 py-0.5 rounded shadow-inner border border-white/10 shrink-0 max-w-[130px]">
+                        <span id="chat-id" class="truncate" title="ID Lengkap">ID: -</span>
+                        <button id="btn-copy-id" onclick="copyContactId()" class="hidden hover:text-white transition-colors p-0.5 shrink-0" title="Copy Nomor WA">
+                            <svg width="10" height="10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                        </button>
+                    </div>
+
+                    <!-- Wadah RFM -->
+                    <div id="rfm-display" class="empty:hidden shrink-0"></div>
+                </div>
+
+                <!-- Baris 3: PREVIEW CATATAN UNIVERSAL (Rapat Kiri) -->
+                <div id="note-container" class="hidden items-center justify-start gap-1 w-full text-[9px] sm:text-[10px] mt-0.5">
+                    <!-- Ditambahkan max-w-[80%] dan dibuang flex-1 agar teks hanya selebar isi tanpa mendorong logo -->
+                    <div class="truncate max-w-[80%] text-green-200/90 italic cursor-pointer hover:text-white transition-colors" onclick="showCustomerNotes()" title="Klik untuk baca detail catatan">
+                        <span id="note-preview"></span>
+                    </div>
+                    <!-- Tombol Catatan Readmore (Kini menempel langsung di ujung kanan teks catatan) -->
+                    <button id="btn-show-notes" onclick="showCustomerNotes()" class="bg-white/20 hover:bg-white/30 p-1 rounded transition-colors flex items-center justify-center border border-white/20 shadow-sm shrink-0" title="Baca Semua Catatan">
+                        <svg width="9" height="9" fill="currentColor" viewBox="0 0 16 16"><path d="M14 1a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H4.414A2 2 0 0 0 3 11.586l-2 2V2a1 1 0 0 1 1-1h12zM2 0a2 2 0 0 0-2 2v12.793a.5.5 0 0 0 .854.353l2.853-2.853A1 1 0 0 1 4.414 12H14a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H2z"/><path d="M3 3.5a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 1-.5-.5zM3 6a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9A.5.5 0 0 1 3 6zm0 2.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5z"/></svg>
                     </button>
                 </div>
-                <div id="chat-id" class="text-[10px] opacity-80 truncate">ID: -</div>
+
             </div>
-            <div id="chat-badges" class="flex gap-1"></div>
         </div>
 
+        <!-- Footnote Dihapus total. Langsung ke area pesan -->
         <div id="chat-window" class="flex-1 overflow-y-auto p-3 flex flex-col space-y-1">
             <div id="chat-content" class="flex flex-col">
                 <div class="mt-20 text-center text-gray-400 italic text-sm px-10">Pilih pesan untuk mulai mengobrol.</div>
@@ -416,13 +454,32 @@
     // =========================================================
     let deviceCache = [];
 
-    // FUNGSI COPY WEBHOOK
+    // FUNGSI COPY WEBHOOK (Teroptimasi untuk OneSender)
     function copyWebhookUrl() {
         const input = document.getElementById('webhook-url-display');
+        
+        // 1. Ambil URL dasar dan pisahkan jika sebelumnya sudah ada parameter ?device=
+        let baseUrl = input.value.split('?device=')[0]; 
+        
+        // 2. Tangkap nilai dari input form secara real-time
+        const apiUrl = document.getElementById('dev-col-9') ? document.getElementById('dev-col-9').value.toLowerCase() : "";
+        const noServer = document.getElementById('dev-col-6') ? document.getElementById('dev-col-6').value.replace(/\D/g, "") : "";
+        
+        // 3. Logika Injeksi: Jika memakai OneSender dan No Server terisi, tempelkan parameternya
+        if (apiUrl.includes('oneapi') && noServer !== "") {
+            baseUrl += '?device=' + noServer;
+        }
+        
+        // 4. Update tampilan input di UI agar pengguna melihat URL utuh yang disalin
+        input.value = baseUrl;
+        
+        // 5. Eksekusi salin ke Clipboard bawaan browser
         input.select();
         input.setSelectionRange(0, 99999);
-        navigator.clipboard.writeText(input.value).then(() => {
-            showToast("URL Webhook disalin ke Keyboard!");
+        navigator.clipboard.writeText(baseUrl).then(() => {
+            showToast("✅ URL Webhook disalin ke Keyboard!");
+        }).catch(err => {
+            showToast("❌ Gagal menyalin URL!");
         });
     }
 
@@ -431,26 +488,24 @@
         document.getElementById('config-modal').classList.remove('hidden');
         document.getElementById('config-loading').classList.remove('hidden');
         
-        // Sembunyikan bagian Setting Utama, tampilkan bagian Device List
         document.getElementById('config-main').classList.add('hidden');
         document.getElementById('section-device-list').classList.remove('hidden');
         document.getElementById('section-sys-settings').classList.add('hidden');
         
         document.getElementById('config-modal-title').innerText = "📱 Manajemen Device";
         
+        // Tampilkan tombol kontrol Device (+ Tambah & Grid) di Header
+        const controls = document.getElementById('header-device-controls');
+        if(controls) { controls.classList.remove('hidden'); controls.classList.add('flex'); }
+        
+        // ... (Kode google.script.run.withSuccessHandler tetap sama seperti milik Anda) ...
         google.script.run
             .withSuccessHandler(function(data) {
                 if (!data || typeof data !== 'object') { showToast("Data Corrupt!"); closeConfigModal(); return; }
-                
-                // --- TAMBAHKAN BARIS INI AGAR URL WEBHOOK TERBACA ---
                 if(document.getElementById('webhook-url-display')) {
                     document.getElementById('webhook-url-display').value = data.webhookUrl || "A2 Kosong / URL belum dideteksi";
                 }
-                // ---------------------------------------------------
-                
                 let rawDevices = data.devices || []; 
-                
-                // RULE 2: Filter Menu Manajemen Device Kolom B (Akun CS)
                 if (!isMasterAdmin) {
                     deviceCache = rawDevices.filter(d => {
                         let akunDevice = String(d.fullRow[1] || "").trim();
@@ -459,9 +514,7 @@
                 } else {
                     deviceCache = rawDevices;
                 }
-                
                 renderDeviceList();
-                
                 document.getElementById('config-loading').classList.add('hidden');
                 document.getElementById('config-main').classList.remove('hidden');
             })
@@ -469,7 +522,7 @@
             .getSettingsForUI(SHEET_URL);
     }
 
-    // === FUNGSI BARU: MEMBUKA MODAL SETTING (GERIGI) ===
+   // === FUNGSI BARU: MEMBUKA MODAL SETTING (GERIGI) ===
     function openSettingPanel() {
         document.getElementById('config-modal').classList.remove('hidden');
         document.getElementById('config-loading').classList.remove('hidden');
@@ -480,6 +533,10 @@
         
         document.getElementById('config-modal-title').innerText = "⚙️ Pengaturan Sistem";
         
+        // Sembunyikan tombol kontrol Device di Header saat menu Setting dibuka
+        const controls = document.getElementById('header-device-controls');
+        if(controls) { controls.classList.remove('flex'); controls.classList.add('hidden'); }
+
         google.script.run
             .withSuccessHandler(function(data) {
                 if (!data || typeof data !== 'object') { showToast("Data Corrupt!"); closeConfigModal(); return; }
@@ -580,6 +637,22 @@
             })
             .withFailureHandler(function(e) { showToast("Gagal memuat pengaturan!"); closeConfigModal(); })
             .getSettingsForUI(SHEET_URL);
+    }
+
+    // --- FUNGSI BARU: MENGUBAH TAMPILAN GRID DEVICE (KHUSUS DESKTOP) ---
+    function changeGrid() {
+        const list = document.getElementById('device-list');
+        const val = document.getElementById('grid-selector').value;
+        
+        // Kembalikan ke format responsif dasar (Mobile tetap 1 kolom, Tablet kecil tetap 2)
+        list.className = 'grid grid-cols-1 sm:grid-cols-2 gap-3 transition-all duration-300';
+        
+        // Suntikkan class tailwind penimpa khusus untuk layar besar (Desktop) sesuai pilihan user
+        if (val === '1') list.classList.add('md:grid-cols-1', 'lg:grid-cols-1');
+        if (val === '2') list.classList.add('md:grid-cols-2', 'lg:grid-cols-2');
+        if (val === '3') list.classList.add('md:grid-cols-3', 'lg:grid-cols-3');
+        if (val === '4') list.classList.add('md:grid-cols-3', 'lg:grid-cols-4');
+        if (val === '5') list.classList.add('md:grid-cols-3', 'lg:grid-cols-5');
     }
 
 
@@ -883,7 +956,8 @@
     // --- FUNGSI TOOLTIP KLIK ---
     function showTooltip(title, text) {
         document.getElementById('tooltip-title').innerText = title;
-        document.getElementById('tooltip-text').innerText = text;
+        // UBAH: dari innerText ke innerHTML agar list HTML <ul><li> bisa terbaca
+        document.getElementById('tooltip-text').innerHTML = text; 
         document.getElementById('global-tooltip-modal').classList.remove('hidden');
     }
 
@@ -1464,6 +1538,7 @@ function getAvatarColorClass(isMe, waLabel) {
                     unsub: isUnsubAI, 
                     // PERBAIKAN: Langsung tembak Kolom D (Index 3)
                     device: String(row[3] || "Default").trim(), 
+                    biodata: String(row[9] || ""), // <--- BARU: Ambil Kolom J
                     lastMsg: lastLines.length > 1 ? lastLines.slice(1).join(' ').trim() : lastMsgRaw,
                     isUnread: isUnread
                 });
@@ -1612,17 +1687,120 @@ function getEmbeddableImageUrl(url) {
         renderSidebar(); 
     }
 
+    // --- BLOK KODE BARU: HELPER RENDER BADGE & RFM ---
+    function renderBadgesHtml(waLabel, isUnsub, isHeader = false) {
+        let html = '';
+        if (waLabel) {
+            const labels = waLabel.split(',').map(l => l.trim()).filter(l => l !== "");
+            html = labels.map(l => {
+                let text = l.toUpperCase();
+                if (text === 'UNSUBAI') return '';
+                if (text.startsWith('CRM_')) {
+                    let clean = text.replace('CRM_', '').replace(/_/g, ' ');
+                    let styleCrm = isHeader ? "bg-yellow-400 text-yellow-900 px-2 py-0.5 rounded text-[9px] font-extrabold shadow-sm" : "bg-purple-100 text-purple-700 border border-purple-200 px-2 py-0.5 rounded text-[9px] font-extrabold shadow-sm";
+                    return `<span class="${styleCrm}">👑 ${clean}</span>`;
+                }
+                let styleDef = isHeader ? "badge-wa !bg-white/20 !text-white border-none" : "badge-wa";
+                return `<span class="${styleDef}">${l}</span>`;
+            }).join(' ');
+        }
+        if (isUnsub) html += ` <span class="badge-unsub-ai !bg-red-500 !text-white border-white/40">UNSUB AI</span>`;
+        return html;
+    }
+
+// --- BLOK KODE BARU: HELPER RFM COMPACT, COPY ID, & CATATAN ---
+    let currentCustomerNotesHtml = ""; // Variabel global penyimpan catatan sementara
+
+    function copyContactId() {
+        if (!currentContactId) return;
+        // Ekstrak HANYA nomor WA dari ID Networking (buang teks ".Server..." di belakangnya)
+        let cleanId = currentContactId.split('.')[0].replace(/\D/g, '');
+        navigator.clipboard.writeText(cleanId).then(() => {
+            showToast("✅ Nomor WA disalin: " + cleanId);
+        });
+    }
+
+    function showCustomerNotes() {
+        if(currentCustomerNotesHtml !== "") {
+            showTooltip("📝 Catatan Customer", currentCustomerNotesHtml);
+        }
+    }
+
+function formatRfmTextCompact(rfmLine) {
+        let match = rfmLine.match(/\[RFM (.*?)\] (.*)/i);
+        if(match) {
+            let vals = match[2].split(',');
+            if(vals.length >= 3) {
+                let r = vals[0].trim(), f = vals[1].trim(), m = parseInt(vals[2].trim()) || 0;
+                // Format M lebih ringkas
+                let mStr = m >= 1000000 ? (m/1000000).toFixed(1).replace('.0','') + 'Jt' : (m >= 1000 ? (m/1000).toFixed(0) + 'Rb' : m);
+                
+                // Desain Badge Compact dengan pembatas yang rapi
+                return `<span class="bg-black/20 text-white px-1.5 py-0.5 rounded font-bold tracking-wider shadow-inner border border-white/10" title="Data diperbarui: ${match[1]}">🎯 R:${r} | F:${f} | M:${mStr}</span>`;
+            }
+        }
+        return ""; 
+    }
+
     function selectContact(contact) {
         currentContactId = contact.id;
         document.getElementById('input-container').classList.remove('hidden');
         document.getElementById('chat-name').innerText = contact.name;
         document.getElementById('chat-id').innerText = `ID: ${contact.id}`;
+        
+        // Tampilkan tombol copy ID
+        document.getElementById('btn-copy-id').classList.remove('hidden');
+
         const av = document.getElementById('chat-avatar');
         av.innerText = contact.name.charAt(0).toUpperCase();
         av.className = `w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg border border-white/20 ${getAvatarColorClass(contact.isMe, contact.waLabel)}`;
+        
+        // Render Badges di Header Chat
         const badges = document.getElementById('chat-badges');
-        badges.innerHTML = (contact.waLabel ? `<span class="badge-wa !bg-white/20 !text-white border-none">${contact.waLabel}</span>` : '') + (contact.unsub ? `<span class="badge-unsub-ai !bg-red-500 !text-white border-white/40">UNSUB</span>` : '');
-        // 2. OTOMATIS TANDAI SEBAGAI SUDAH DIBACA DI DATABASE
+        badges.innerHTML = renderBadgesHtml(contact.waLabel, contact.unsub, true);
+
+        // Render RFM & Catatan di Bawah Nomor
+        const rfmDisplay = document.getElementById('rfm-display');
+        const noteContainer = document.getElementById('note-container');
+        const notePreview = document.getElementById('note-preview');
+        
+        currentCustomerNotesHtml = ""; // Reset memori catatan
+        rfmDisplay.innerHTML = "";
+        
+        // Reset kontainer preview catatan
+        if (notePreview) notePreview.innerHTML = "";
+        if (noteContainer) {
+            noteContainer.classList.remove('flex');
+            noteContainer.classList.add('hidden');
+        }
+
+        if (contact.biodata) {
+            let lines = contact.biodata.split('\n').filter(l => l.trim() !== "");
+            let rfmLine = lines.find(l => l.includes('[RFM'));
+            let otherLines = lines.filter(l => !l.includes('[RFM'));
+
+            // Membangun Badge RFM
+            if (rfmLine) {
+                rfmDisplay.innerHTML = formatRfmTextCompact(rfmLine);
+            }
+
+            // Membangun Preview Catatan Baris 1
+            if (otherLines.length > 0) {
+                // SUNTIKAN BARU: Tampilkan baris pertama catatan
+                let firstNote = otherLines[0].replace(/^~\s*/, '');
+                if (notePreview) notePreview.innerText = "• " + firstNote;
+
+                // Susun HTML lengkap untuk disuntikkan ke Modal Tooltip saat diklik
+                currentCustomerNotesHtml = `<ul class="list-disc pl-4 text-left space-y-1 text-sm text-gray-700 font-medium">${otherLines.map(l => `<li>${l.replace(/^~\s*/, '')}</li>`).join('')}</ul>`;
+                
+                // Tampilkan baris ke-3 (Kontainer Catatan & Tombol Readmore)
+                if (noteContainer) {
+                    noteContainer.classList.remove('hidden');
+                    noteContainer.classList.add('flex');
+                }
+            }
+        }
+        
     if (contact.isUnread) {
         // Update di tampilan lokal agar badge biru langsung hilang tanpa nunggu refresh
         const rowIndex = allData.findIndex(r => r[1] === contact.id);
@@ -1909,7 +2087,7 @@ function openEditModal() {
         document.getElementById('edit-name-input').value = row[7] || "";
         
         // TAMBAHAN BARU: Isi field biodata (row[8])
-        document.getElementById('edit-biodata-input').value = row[8] || "";
+        document.getElementById('edit-biodata-input').value = row[9] || "";
         
         // Ambil label yang sedang aktif di kontak ini (row[2])
         const currentLabels = (row[2] || "").toUpperCase().split(',').map(l => l.trim());
@@ -1961,7 +2139,7 @@ function openEditModal() {
                     if (rowIndex > -1) {
                         allData[rowIndex][7] = newName; // Update Nama
                         allData[rowIndex][2] = newLabels; // Update Label
-                        allData[rowIndex][8] = newBiodata; // Update Biodata
+                        allData[rowIndex][9] = newBiodata; // Update Biodata
                     }
                     
                     document.getElementById('edit-modal').classList.add('hidden');
@@ -2073,9 +2251,29 @@ function openEditModal() {
 <div id="config-modal" class="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[100] hidden backdrop-blur-sm">
     <div class="bg-white rounded-xl w-full max-w-[98%] shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
         <div class="bg-[#008069] p-4 text-white font-bold flex justify-between items-center">
-            <!-- Pada Modal Config, ubah span judulnya menjadi: -->
             <span id="config-modal-title">⚙️ Setting</span>
-            <button onclick="closeConfigModal()" class="text-white hover:text-gray-200 text-xl font-bold">&times;</button>
+            
+            <!-- BLOK KODE BARU: KONTROL HEADER (GRID & TAMBAH DEVICE) -->
+            <div class="flex items-center gap-3">
+                <div id="header-device-controls" class="hidden items-center gap-2">
+                    <!-- Menu Grid (Hanya tampil di Desktop: hidden md:block) -->
+                    <select id="grid-selector" onchange="changeGrid()" class="hidden md:block text-[#008069] bg-white text-[11px] px-2 py-1 rounded outline-none cursor-pointer font-bold border-none shadow-sm">
+                        <option value="1">Grid 1</option>
+                        <option value="2">Grid 2</option>
+                        <option value="3">Grid 3</option>
+                        <option value="4">Grid 4</option>
+                        <option value="5" selected>Grid 5</option>
+                    </select>
+                    
+                    <!-- Tombol Tambah Baru (Ikon Plus Saja) -->
+                    <button onclick="openDevForm()" class="bg-white/20 hover:bg-white/30 text-white rounded-full w-7 h-7 flex items-center justify-center transition-colors shadow-sm" title="Tambah Device Baru">
+                        <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/></svg>
+                    </button>
+                </div>
+
+                <!-- Tombol Close Asli -->
+                <button onclick="closeConfigModal()" class="text-white hover:text-gray-200 text-2xl font-bold leading-none ml-1">&times;</button>
+            </div>
         </div>
         
         <div class="flex-1 overflow-y-auto p-5 space-y-5" id="config-content">
@@ -2086,14 +2284,11 @@ function openEditModal() {
             
            <div id="config-main" class="hidden space-y-6">
                 
-                <!-- BAGIAN 1: MANAJEMEN DEVICE (Disembunyikan otomatis oleh JS jika Gerigi diklik) -->
-                <div id="section-device-list" class="border border-gray-200 rounded-xl p-4 bg-white shadow-sm">
-                    <div class="flex justify-between items-center border-b pb-3 mb-4">
-                        <h3 class="font-bold text-[#008069] text-base flex items-center gap-2">Daftar Device Aktif</h3>
-                        <button onclick="openDevForm()" class="bg-[#00a884] text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-[#008f6f] shadow-sm transition-all">+ Tambah Baru</button>
-                    </div>
+                <!-- BAGIAN 1: MANAJEMEN DEVICE (Lebih Clean tanpa border tambahan) -->
+                <div id="section-device-list" class="bg-white">
+                    <!-- Header tulisan "Daftar Device Aktif" dan garis pembatas telah DIHAPUS agar clean -->
                     <!-- Container Grid -->
-                    <div id="device-list" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3"></div>
+                    <div id="device-list" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 transition-all duration-300"></div>
                 </div>
 
                 <!-- BAGIAN 2: PENGATURAN SISTEM UTAMA (Object Mode) -->
@@ -2302,6 +2497,10 @@ function openEditModal() {
                 <input type="text" id="webhook-url-display" readonly class="w-full bg-white border border-blue-200 p-2 rounded text-xs text-gray-600 outline-none select-all">
                 <button onclick="copyWebhookUrl()" class="bg-blue-600 text-white px-4 py-2 rounded text-xs font-bold hover:bg-blue-700 shrink-0 shadow-sm transition-colors flex items-center gap-1">📋 Copy</button>
             </div>
+            <!-- BLOK KODE BARU: Catatan instruksi khusus OneSender -->
+            <p class="text-[9px] text-red-500 italic mt-2 leading-tight">
+                *Khusus pengguna OneSender: Wajib menambahkan parameter <b>"?device=nomordevice"</b> di belakang link. Contoh: <span class="font-mono text-red-600">?device=6281234567890</span> (Gunakan tombol Copy di atas untuk injeksi otomatis).
+            </p>
         </div>
 
         <!-- Area Form Scrollable -->

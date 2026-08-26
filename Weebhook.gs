@@ -391,7 +391,9 @@ function processWebhook(data, clientSheetId, urlDevice = null) {
       }
     }
 
-    const oldData = getCustomerDataRow(targetSheet, rowIndex);
+    // BLOK KODE BARU: Ubah const menjadi let agar bisa diperbarui oleh Eager Insertion
+    let oldData = getCustomerDataRow(targetSheet, rowIndex); 
+    
     if (oldData) {
       const currentMsgId = String(mappedData.message_id);
       const shortId = currentMsgId.slice(-4); 
@@ -478,17 +480,42 @@ function processWebhook(data, clientSheetId, urlDevice = null) {
     // ====================================================================
     // FITUR BARU: OVERRIDE NAMA DARI TANDA KUTIP TUNGGAL ('nama')
     // ====================================================================
-    // Mencari teks apa saja yang diapit oleh tanda kutip tunggal
-    let nameMatch = String(mappedData.message || "").match(/'([^']+)'/);
-    
-    // Jika menemukan kecocokan
-    if (nameMatch && nameMatch[1]) {
-        let extractedName = nameMatch[1].trim();
+    // SYARAT 1: Fitur ini HANYA aktif jika yang mengetik adalah Admin (is_me = true)
+    if (mappedData.is_me) {
+        let nameMatch = String(mappedData.message || "").match(/'([^']+)'/);
         
-        // Proteksi: Pastikan nama tidak kosong dan tidak terlalu panjang
-        // (Mencegah error jika user tanpa sengaja mengutip satu paragraf penuh)
-        if (extractedName.length > 0 && extractedName.length <= 20) {
-            finalH = extractedName;
+        if (nameMatch && nameMatch[1]) {
+            let extractedName = nameMatch[1].trim();
+            
+            // SYARAT 2: Filter Kebersihan (Hanya izinkan huruf, spasi, dan titik)
+            // Jika ada Emoji (🟢), Angka, atau Simbol aneh, langsung ditolak!
+            let isOnlyLetters = /^[a-zA-Z\s\.]+$/.test(extractedName);
+            
+            if (isOnlyLetters) {
+                // SYARAT 3: Daftar Blacklist (Kata sapaan/tugas yang harus dibuang)
+                let blacklistWords = ['hai', 'halo', 'ok', 'oke', 'siap', 'yes', 'done', 'ping', 'do', 'overtime', 'overdue'];
+                
+                let pureName = extractedName;
+                
+                // SYARAT 4: Logika Word Boundary (\b) & Case Insensitive (gi)
+                // Menghapus kata blacklist dari kalimat, TANPA merusak kata lain (Misal: 'Doke' tidak terpotong)
+                blacklistWords.forEach(word => {
+                    let regex = new RegExp('\\b' + word + '\\b', 'gi');
+                    pureName = pureName.replace(regex, '');
+                });
+                
+                // Bersihkan kelebihan spasi di tengah/awal/akhir akibat kata yang dihapus
+                pureName = pureName.replace(/\s+/g, ' ').trim();
+                
+                // SYARAT 5: Eksekusi penulisan jika sisa namanya valid (2 s/d 25 karakter)
+                if (pureName.length >= 2 && pureName.length <= 25) {
+                    
+                    // Auto-Kapitalisasi (Title Case) -> 'pak galih' jadi 'Pak Galih'
+                    let cleanName = pureName.toLowerCase().split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+                    
+                    finalH = cleanName; // Timpa Kolom Nama (H) dengan nama yang sudah diekstrak murni
+                }
+            }
         }
     }
 
@@ -498,6 +525,36 @@ function processWebhook(data, clientSheetId, urlDevice = null) {
       qtyInbox += (parseInt(oldData.qtyInbox) || 0);
       qtyOutbox += (parseInt(oldData.qtyOutbox) || 0);
     }
+
+    // ====================================================================
+    // BLOK KODE BARU: EAGER INSERTION (ANTI-DUPLIKAT KHUSUS NOMOR BARU)
+    // ====================================================================
+    // HANYA tereksekusi jika ini nomor baru yang belum ada di Networking
+    if (rowIndex === -1) {
+        let earlyWaktuMasuk = mappedData.is_me ? "" : mappedData.received_at;
+        let earlyWaktuKeluar = mappedData.is_me ? mappedData.received_at : "";
+        let earlyBsuid = mappedData.is_me ? "" : bsuid;
+        
+        // Susun struktur "Baris Draft" 26 Kolom
+        let earlyRowData = [
+            namaAkun, uniqueIdB, finalC, finalColD, finalColE, (mappedData.is_me ? mappedData.to : mappedData.from), earlyBsuid, finalH, finalI, 
+            "", "", "", mappedData.tglformat, mappedData.is_me, mappedData.message_id, 
+            earlyWaktuMasuk, earlyWaktuKeluar, qtyInbox, qtyOutbox, 
+            "", // History dikosongkan dulu
+            JSON.stringify(data), "Queue", "", "", "", true, ""
+        ];
+        
+        // Langsung catat ke database dan kunci paksa dengan flush
+        targetSheet.appendRow(earlyRowData);
+        SpreadsheetApp.flush(); 
+        
+        // Ubah rowIndex menjadi baris yang baru saja dibuat
+        rowIndex = targetSheet.getLastRow(); 
+        
+        // Refresh variabel oldData agar sisa script di bawah tidak crash
+        oldData = getCustomerDataRow(targetSheet, rowIndex);
+    }
+    // ====================================================================
 
     // 5. HISTORY & MEDIA HANDLING
     let historyLama = oldData ? (oldData.historyChat || "") : "";
@@ -623,146 +680,200 @@ if (data) textForFinance = data.message_text || data.caption || data.text || dat
 if (!textForFinance) textForFinance = mappedData.message || "";
 textForFinance = String(textForFinance).trim();
 
-// Cek apakah perintah diawali dengan /finance (Case Insensitive)
-    let isManualFinance = textForFinance.toUpperCase().startsWith("/FINANCE");
+// 1. Deteksi Command secara terpisah
+    let isFinancePure = textForFinance.toUpperCase().startsWith("/FINANCE") && !textForFinance.toUpperCase().startsWith("/FINANCEAI");
+    let isFinanceAI = textForFinance.toUpperCase().startsWith("/FINANCEAI") && mappedData.file_url; // Wajib ada gambar
 
-    if (isManualFinance) {
-        
-        // --- BLOK KODE BARU: SECURITY GATE GLOBAL (GRUP & INDIVIDU) ---
-        // Memeriksa apakah ID terdaftar di Networking (oldData) DAN memiliki label 'FINANCE' (finalC)
+    // 2. SECURITY GATE GLOBAL (Hanya izinkan ID yang memiliki label FINANCE)
+    if (isFinancePure || isFinanceAI) {
         let hasFinanceLabel = String(finalC).toUpperCase().includes("FINANCE");
-        
         if (!oldData || !hasFinanceLabel) {
-            // Jika ID tidak terdaftar atau tidak punya label finance, tolak secara diam-diam
-            // Aturan ini mengamankan dari chat individu iseng maupun dari grup tak berizin
             return ContentService.createTextOutput("IGNORED_UNAUTHORIZED_FINANCE");
         }
-        // --- AKHIR SECURITY GATE ---
+    }
 
-        // Fungsi mungil untuk mengekstrak nilai secara aman walau agen membiarkannya kosong
+    // ====================================================================
+    // SKENARIO A: MURNI MANUAL (/finance tanpa AI)
+    // ====================================================================
+    if (isFinancePure) {
         let getVal = (key) => {
-        let regex = new RegExp(key + "\\s*[:=]\\s*(.*)", "i");
-        let match = textForFinance.match(regex);
-        return match ? match[1].trim() : "";
-    };
+            let regex = new RegExp(key + "\\s*[:=]\\s*(.*)", "i");
+            let match = textForFinance.match(regex);
+            return match ? match[1].trim() : "";
+        };
 
-    let valStatus       = getVal("Status");
-    // TAMBAHAN: Tangkap nilai Nama, WA, Akun, dan Agen dari ketikan Agen
-    let valNamaKonsumen = getVal("Nama Konsumen") || getVal("Pelanggan"); 
-    let valNoWA         = getVal("No WA") || getVal("WA") || getVal("Nomor WA");
-    let valAkun         = getVal("Akun");
-    let valAgen         = getVal("Agen");
-    
-    let valJenis    = getVal("Jenis");
-    let valKategori = getVal("Kategori");
-    let valTgl      = getVal("Tgl Transaksi") || getVal("Tanggal");
-    let valNamaItem = getVal("Nama Item");
-    let valQty      = getVal("Qty") || getVal("Quantity");
-    let valSatuan   = getVal("Satuan");
-    let valHarga    = getVal("Harga Satuan") || getVal("Harga");
-    let valTotal    = getVal("Total");
-
-    // --- PEMBERSIHAN ANGKA MURNI (Data Sanitization) ---
-    // Gunakan \D untuk menghapus SEMUA karakter selain angka (Titik, Koma, Spasi, Huruf, Strip dll)
-    if (valQty)   valQty   = valQty.replace(/\D/g, "");
-    if (valHarga) valHarga = valHarga.replace(/\D/g, "");
-    if (valTotal) valTotal = valTotal.replace(/\D/g, "");
-
-    // --- LOGIKA OVERRIDE DATA DEFAULT ---
-    
-    // 1. Override Nama Konsumen HANYA untuk Sheet Finance (Variabel Bayangan)
-    let finalNamaKonsumen = finalH; 
-    if (valNamaKonsumen) {
-        finalNamaKonsumen = valNamaKonsumen; 
-    }
-
-    // 2. Override ID Networking menggunakan variabel bayangan
-    let finalUniqueIdB = uniqueIdB; 
-    if (valNoWA) {
-        let cleanWA = valNoWA.replace(/\D/g, "");
-        if (cleanWA.startsWith("0")) {
-            cleanWA = "62" + cleanWA.substring(1);
-        } else if (cleanWA.startsWith("8")) {
-            cleanWA = "62" + cleanWA;
+        let valStatus       = getVal("Status") || "Pending";
+        let valNamaKonsumen = getVal("Nama Konsumen") || getVal("Pelanggan"); 
+        let valNoWA         = getVal("No WA") || getVal("WA") || getVal("Nomor WA");
+        let valAkun         = getVal("Akun");
+        let valAgen         = getVal("Agen");
+        
+        let valJenis    = getVal("Jenis");
+        let valKategori = getVal("Kategori");
+        let valTgl      = getVal("Tgl Transaksi") || getVal("Tanggal");
+        let valNamaItem = getVal("Nama Item");
+        let valQty      = getVal("Qty") || getVal("Quantity");
+        let valSatuan   = getVal("Satuan");
+        let valHarga    = getVal("Harga Satuan") || getVal("Harga");
+        let valTotal    = getVal("Total");
+        let valNomorStruk = getVal("Nomor Struk") || getVal("Referensi") || getVal("Invoice");
+        
+        if (valQty)   valQty   = valQty.replace(/\D/g, "");
+        if (valHarga) valHarga = valHarga.replace(/\D/g, "");
+        if (valTotal) valTotal = valTotal.replace(/\D/g, "");
+        
+        let finalNamaKonsumen = valNamaKonsumen ? valNamaKonsumen : finalH; 
+        let finalUniqueIdB = uniqueIdB; 
+        if (valNoWA) {
+            let cleanWA = valNoWA.replace(/\D/g, "");
+            if (cleanWA.startsWith("0")) cleanWA = "62" + cleanWA.substring(1);
+            else if (cleanWA.startsWith("8")) cleanWA = "62" + cleanWA;
+            finalUniqueIdB = cleanWA + "." + finalColD;
         }
-        finalUniqueIdB = cleanWA + "." + finalColD;
+
+        let finalAkunFinance = valAkun ? valAkun : namaAkun;
+        let finalAgenFinance = valAgen ? valAgen : finalColD;
+
+        let manualDataCSV = valJenis + ";;" + valKategori + ";;" + valTgl + ";;" + valNamaItem + ";;" + valQty + ";;" + valSatuan + ";;" + valHarga + ";;" + valTotal + ";;" + valNomorStruk + ";;" + valStatus;
+        let logTambahan = "Input Manual via /finance\n" + imagePipelineLogs.join("\n");
+
+        logImageActivity(finalUniqueIdB, logTambahan, driveLink, manualDataCSV, finalAgenFinance, finalAkunFinance, finalNamaKonsumen, clientSheetId, mappedData, namaFile, textForFinance);
+
+        finalAiLabel = mappedData.is_me ? "Admin Reply" : "Stop"; 
+        finalAiLog = "Processed Manual Finance";
+        updateKolomY = true;
     }
 
-    // 3. Override Akun dan Agen HANYA untuk Sheet Finance (Variabel Bayangan)
-    // Jika di WA tidak diketik 'Akun = ...' maka gunakan default (namaAkun)
-    let finalAkunFinance = valAkun ? valAkun : namaAkun;
-    let finalAgenFinance = valAgen ? valAgen : finalColD;
-
-    // 4. Susun format array string (pakai double titik koma)
-    let manualDataCSV = valJenis + ";;" + valKategori + ";;" + valTgl + ";;" + valNamaItem + ";;" + valQty + ";;" + valSatuan + ";;" + valHarga + ";;" + valTotal + ";;" + valStatus;
-
-    let logTambahan = "Input Manual via /finance\n" + imagePipelineLogs.join("\n");
-
-    // 5. Eksekusi penulisan ke Sheet Finance
-    // PERBAIKAN: Lempar 'finalAgenFinance' dan 'finalAkunFinance' untuk menimpa 'finalColD' dan 'namaAkun'
-    logImageActivity(finalUniqueIdB, logTambahan, driveLink, manualDataCSV, finalAgenFinance, finalAkunFinance, finalNamaKonsumen, clientSheetId, mappedData, namaFile, textForFinance);
-
-    // 6. Kunci proses lanjutan agar AI tidak ter-trigger dan tidak membalas pesan ini
-    finalAiLabel = mappedData.is_me ? "Admin Reply" : "Stop"; 
-    finalAiLog = "Processed Manual Finance";
-    updateKolomY = true;
-}
-// URUTAN 1: Cek File/Gambar (Jika Media -> Vision -> Queue)
-else if (mappedData.file_url) {
-    let rawVision = config.device.promptrawVision || "";
-      let promptVision = "### [TUGAS KHUSUS ANALISIS GAMBAR]\n"+
-      "Ekstrak data bukti mutasi/transfer/gambar dengan format presisi. Pisahkan setiap nilai menggunakan Double Titik Koma (;;) persis seperti pola berikut:\n"+
-      "Status|Jenis;;Kategori;;Tgl Transaksi;;Nama Item;;Qty;;Satuan;;Harga Satuan;;Total\n\n"
-      + rawVision + "";
-      
-      finalAiPrompt = promptVision;
-      
-      imagePipelineLogs.push("[INFO] 3. Mengirim Data ke AI Gemini Vision...");
-      // === TAMBAHAN LOG PROMPT VISION ===
-      imagePipelineLogs.push("[INFO] Isi Prompt Vision:\n" + promptVision);
-
-      // === MENGIRIM ARRAY imagePipelineLogs KE DALAM FUNGSI ===
-      let rawResponse = callGeminiVision(config.geminiApiKey, config.geminiModel, config.fallbackModels, promptVision, mappedData.message, imageBlobGlobal, config.tempGemini, imagePipelineLogs);
-      
-      let aiExtractedData = ""; // <--- Variabel baru untuk menampung teks koma (CSV)
-
-      if (rawResponse && rawResponse.includes("|")) {
-        let aiLabel = rawResponse.split("|")[0].trim();
-        let deskripsiGambar = rawResponse.split("|")[1].trim();
-        aiExtractedData = deskripsiGambar; // <--- Simpan hasil AI ke variabel ini
-        finalAiLog = rawResponse;
-        finalAiLabel = (aiLabel === "Queue") ? aiLabel : "Stop"; 
-        historyUpdatefix += "\n[" + (mappedData.is_me ? "Admin" : "User") + " Kirim Gambar : " + deskripsiGambar + "]";
+    // ====================================================================
+    // SKENARIO B: ADA GAMBAR (Customer Kirim Gambar ATAU Admin pakai /financeai)
+    // ====================================================================
+    else if (mappedData.file_url) {
+        let aiExtractedData = ""; 
         
-        // === UBAH ANGKA 4 MENJADI 5 ===
-        imagePipelineLogs.push("[SUCCESS] 5. AI Vision Berhasil. Deskripsi: " + deskripsiGambar);
-      } else {
-        finalAiLog = "Vision Error: " + rawResponse;
-        finalAiLabel = "Stop"; 
-        
-        // === UBAH ANGKA 4 MENJADI 5 ===
-        imagePipelineLogs.push("[FAILED] 5. AI Vision Gagal / Respon Tidak Sesuai. Output: " + rawResponse);
-      }
-      
-      updateKolomY = true; 
+        // Eksekusi AI JIKA pengirim adalah Pelanggan (User) ATAU Admin menggunakan /financeai
+        if (!mappedData.is_me || isFinanceAI) {
+            
+            let rawVision = config.device.promptrawVision || "";
+            let promptVision = "";
 
-     // EKSEKUSI LOG KHUSUS: Kirim 1x saja hasil tumpukan array ke Google Sheet LOG
-// ===================================================================================
+            // LOGIKA PROMPT HYBRID UNTUK MULTI-ITEM
+            if (isFinanceAI) {
+                promptVision = "### [TUGAS KHUSUS: FINANCE AI HYBRID MULTI-ITEM]\n"+
+                "Ekstrak bukti transaksi/struk belanja. Pisahkan nilai menggunakan Double Titik Koma (;;) persis seperti pola berikut:\n"+
+                "Status|Jenis;;Kategori;;Tgl Transaksi;;Nama Item (Garis Besar);;Total Qty;;Satuan;;Harga Satuan;;Total;;NomorStrukatauReferensi\n"+
+                "ATURAN KHUSUS MULTI-ITEM: Rincikan tiap barang dari struk ke dalam kolom 'Satuan' WAJIB menggunakan format {Nama Barang, Qty, Harga Satuan, Subtotal}. " +
+                "Contoh struk dengan 2 barang: {Besi Beton Ulir 13, 30, 142000, 4260000}{Besi Beton Polos 8, 30, 54000, 1620000}. " +
+                "PENTING: Jangan gunakan spasi atau koma di antara kurung kurawal penutup dan pembuka }{. Hilangkan tanda titik/koma pada nilai angka harga. " +
+                "Kolom 'Total Qty' diisi kuantitas jenis item misal ada ada list besi beton ulir dan besi beton polos maka Qty isi 2, Kolom Harga satuan diisi dengan Rata-rata=Total/Qty, dan Kolom 'Total' diisi grand total tagihan.\n\n"+ rawVision;
+            } else {
+                promptVision = "### [TUGAS KHUSUS ANALISIS GAMBAR]\n"+
+                "Ekstrak data bukti mutasi/transfer/gambar dengan format presisi. Pisahkan setiap nilai menggunakan Double Titik Koma (;;) persis seperti pola berikut:\n"+
+                "Status|Jenis;;Kategori;;Tgl Transaksi;;Nama Item;;Qty;;Satuan;;Harga Satuan;;Total;;NomorStruk\n\n" + rawVision;
+            }
+            
+            finalAiPrompt = promptVision;
+            
+            imagePipelineLogs.push("[INFO] 3. Mengirim Data ke AI Gemini Vision...");
+            imagePipelineLogs.push("[INFO] Isi Prompt Vision:\n" + promptVision);
+            
+            let rawResponse = callGeminiVision(config.geminiApiKey, config.geminiModel, config.fallbackModels, promptVision, mappedData.message, imageBlobGlobal, config.tempGemini, imagePipelineLogs);
+            
+            let deskripsiGambar = "";
+            let aiLabel = "Stop";
 
-// BLOK KODE BARU: Ekstraksi teks/caption gambar sekuat mungkin
-let extractedCaption = "";
-if (data) {
-    // Coba berbagai variasi key dari payload Starsender/Onesender untuk caption gambar
-    extractedCaption = data.message_text || data.caption || data.text || data.message || "";
-}
-// Jika masih kosong, coba dari mappedData
-if (!extractedCaption && mappedData && mappedData.message) {
-    extractedCaption = mappedData.message;
-}
+            if (rawResponse && (rawResponse.includes("|") || rawResponse.includes(";;"))) {
+                deskripsiGambar = rawResponse; 
+                if (rawResponse.includes("|")) {
+                    let parts = rawResponse.split("|");
+                    aiLabel = parts[0].trim();
+                    deskripsiGambar = parts.slice(1).join("|").trim(); 
+                }
+                finalAiLog = rawResponse;
+                imagePipelineLogs.push("[SUCCESS] 5. AI Vision Berhasil. Deskripsi: " + deskripsiGambar);
+            } else {
+                finalAiLog = "Vision Error: " + rawResponse;
+                imagePipelineLogs.push("[FAILED] 5. AI Vision Gagal / Respon Tidak Sesuai. Output: " + rawResponse);
+            }
+            
+            updateKolomY = true; 
+            
+            // --- PECAH JALUR EKSEKUSI PENYIMPANAN ---
+            if (isFinanceAI) {
+                // JALUR 1: ADMIN HYBRID (Gabungkan AI + Manual Override)
+                let getVal = (key) => {
+                    let regex = new RegExp(key + "\\s*[:=]\\s*(.*)", "i");
+                    let match = textForFinance.match(regex);
+                    return match ? match[1].trim() : "";
+                };
 
-// Mengirimkan data tambahan: Agen (finalColD), Akun (namaAkun), dan Nama Konsumen (finalH), beserta caption
-logImageActivity(uniqueIdB, imagePipelineLogs.join("\n"), driveLink, aiExtractedData, finalColD, namaAkun, finalH, clientSheetId, mappedData, namaFile, extractedCaption);
-    } 
+                // Pecah hasil AI ke Array, pastikan jumlahnya cukup
+                let csvParts = deskripsiGambar.split(";;");
+                while(csvParts.length < 9) csvParts.push("");
+
+                // Timpa hasil AI jika Admin mengetik nilainya secara manual
+                if(getVal("Jenis")) csvParts[0] = getVal("Jenis");
+                if(getVal("Kategori")) csvParts[1] = getVal("Kategori");
+                if(getVal("Tanggal") || getVal("Tgl Transaksi")) csvParts[2] = getVal("Tanggal") || getVal("Tgl Transaksi");
+                if(getVal("Nama Item")) csvParts[3] = getVal("Nama Item");
+                if(getVal("Qty")) csvParts[4] = getVal("Qty").replace(/\D/g, "");
+                if(getVal("Satuan")) csvParts[5] = getVal("Satuan");
+                if(getVal("Harga Satuan") || getVal("Harga")) csvParts[6] = (getVal("Harga Satuan") || getVal("Harga")).replace(/\D/g, "");
+                if(getVal("Total")) csvParts[7] = getVal("Total").replace(/\D/g, "");
+                if(getVal("Nomor Struk") || getVal("Referensi")) csvParts[8] = getVal("Nomor Struk") || getVal("Referensi");
+
+                // Menentukan Status (Prioritas: Manual -> AI -> Default)
+                let hybridStatus = getVal("Status") || aiLabel || "Pending";
+
+                // Gabungkan kembali Array CSV dan tanamkan Status di indeks ke-9
+                aiExtractedData = csvParts.slice(0,9).join(";;") + ";;" + hybridStatus;
+
+                // Override Identifier
+                let valAkun = getVal("Akun");
+                let valAgen = getVal("Agen");
+                let valNoWA = getVal("No WA") || getVal("WA") || getVal("Nomor WA");
+                let valNamaKonsumen = getVal("Nama Konsumen") || getVal("Pelanggan");
+
+                let finalNamaKonsumen = valNamaKonsumen ? valNamaKonsumen : finalH;
+                let finalAkunFinance = valAkun ? valAkun : namaAkun;
+                let finalAgenFinance = valAgen ? valAgen : finalColD;
+                let finalUniqueIdB = uniqueIdB;
+
+                if (valNoWA) {
+                    let cleanWA = valNoWA.replace(/\D/g, "");
+                    if (cleanWA.startsWith("0")) cleanWA = "62" + cleanWA.substring(1);
+                    else if (cleanWA.startsWith("8")) cleanWA = "62" + cleanWA;
+                    finalUniqueIdB = cleanWA + "." + finalColD;
+                }
+
+                // Simpan Log ke Finance
+                logImageActivity(finalUniqueIdB, "Input Hybrid via /financeai\n" + imagePipelineLogs.join("\n"), driveLink, aiExtractedData, finalAgenFinance, finalAkunFinance, finalNamaKonsumen, clientSheetId, mappedData, namaFile, textForFinance);
+
+                // Hentikan agar AI tidak membalas
+                finalAiLabel = "Admin Reply";
+                historyUpdatefix += "\n[Admin Eksekusi /financeai]";
+            } else {
+                // JALUR 2: USER BIASA (Murni AI)
+                // Sisipkan AI Label di belakang array (Index ke-9) agar logImageActivity mendeteksinya
+                aiExtractedData = deskripsiGambar + ";;" + aiLabel; 
+                
+                finalAiLabel = (aiLabel.toUpperCase() === "QUEUE") ? "Queue" : "Stop"; 
+                historyUpdatefix += "\n[User Kirim Gambar : " + deskripsiGambar + "]";
+
+                let extractedCaption = data.message_text || data.caption || data.text || data.message || "";
+                logImageActivity(uniqueIdB, imagePipelineLogs.join("\n"), driveLink, aiExtractedData, finalColD, namaAkun, finalH, clientSheetId, mappedData, namaFile, extractedCaption);
+            }
+
+        } else {
+            // JALUR 3: ADMIN BYPASS GAMBAR BIASA (Promo/Brosur)
+            finalAiLog = "Admin Bypass: Gambar broadcast/promosi tidak masuk Finance.";
+            finalAiLabel = "Admin Reply"; 
+            historyUpdatefix += "\n[Admin Kirim Gambar]";
+            imagePipelineLogs.push("[INFO] 3-5. Gambar dikirim oleh Admin. Eksekusi Vision dan penulisan Finance dilewati.");
+            
+            updateKolomY = true; 
+        }
+    }
+    
     // URUTAN KONDISI UNTUK TEKS (SKENARIO 2 & 3)
     else {
       // URUTAN 3: Jika is_me = False (Pelanggan yang chat)
@@ -1342,26 +1453,30 @@ function logImageActivity(uniqueIdB, pipelineLog, driveLink, aiExtractedData, ag
     const sheetFinance = ss.getSheetByName("Finance"); 
     if (!sheetFinance) return;
 
-    // 1. Parsing Data dari hasil Gemini AI Vision (Dioptimasi)
+   /// 1. Parsing Data dari hasil Gemini AI Vision (Dioptimasi)
     let statusAI = "Pending";
     let jenis = "", kategori = "", namaItem = "", qty = "", satuan = "", harga = "", total = "", tglTransaksiAI = "";
+    let statusFinance = ""; 
+    let nomorStrukAI = ""; // BLOK KODE BARU: Wadah untuk Nomor Struk AI
     
     if (aiExtractedData) {
-      // PERBAIKAN 1: Buang enter/baris baru dari halusinasi AI (misal kata "Berhasil" di baris bawah)
       let cleanData = aiExtractedData.split(/\n/)[0].trim();
-      
-      // PERBAIKAN 2: Gunakan double titik koma (;;) agar teks panjang & koma tidak rusak
       let csvParts = cleanData.split(";;");
       
       jenis = csvParts[0] ? csvParts[0].trim() : "";
       kategori = csvParts[1] ? csvParts[1].trim() : "";
-      tglTransaksiAI = csvParts[2] ? csvParts[2].trim() : ""; // <-- Sesuai Prompt (Urutan 3)
-      namaItem = csvParts[3] ? csvParts[3].trim() : "";       // <-- Sesuai Prompt (Urutan 4)
+      tglTransaksiAI = csvParts[2] ? csvParts[2].trim() : ""; 
+      namaItem = csvParts[3] ? csvParts[3].trim() : "";       
       qty = csvParts[4] ? csvParts[4].trim() : "";
       satuan = csvParts[5] ? csvParts[5].trim() : "";
       harga = csvParts[6] ? csvParts[6].trim() : "";
       total = csvParts[7] ? csvParts[7].trim() : "";
-      statusFinance = (csvParts[8] || "").trim() || "verifikasi";
+      
+      // BLOK KODE BARU: Pergeseran Index Pembacaan AI
+      nomorStrukAI = csvParts[8] ? csvParts[8].trim() : ""; 
+      statusFinance = (csvParts[9] || "").trim() || "Pending"; 
+    } else {
+      statusFinance = (mappedData && mappedData.is_me) ? "Admin Broadcast" : "Pending";
     }
 
     // 2. Generate Format Tanggal, Bulan & ID Unik Inv
@@ -1379,9 +1494,26 @@ function logImageActivity(uniqueIdB, pipelineLog, driveLink, aiExtractedData, ag
     // BLOK KODE BARU: Format bulan teks murni tanpa tanda strip
     // Output Kolom Q: "2608 Agustus"
     const formatBulan = `${yy}${mm} ${months[d.getMonth()]}`;
-
-    // Output Kolom U: "260823092302"
     const idUniqInv = `${yy}${mm}${dd}${hh}${mnt}${sec}`; 
+    
+    // ==============================================================
+    // BLOK KODE BARU: VALIDASI KETAT NOMOR STRUK AI (Anti-Halusinasi)
+    // ==============================================================
+    let finalNomorInvoice = idUniqInv; // Default bawaan saat ini (Backup)
+    
+    // Syarat 1: AI harus membalas teks (tidak kosong)
+    // Syarat 2: Minimal 3 karakter (mencegah balas "-" atau ".")
+    // Syarat 3: Harus mengandung Huruf ATAU Angka (Bukan cuma simbol)
+    if (nomorStrukAI && nomorStrukAI.length > 2 && /[a-zA-Z0-9]/.test(nomorStrukAI)) {
+        
+        let lowerStruk = nomorStrukAI.toLowerCase();
+        // Syarat 4: Coret kata halusinasi AI yang sering muncul
+        let isHalusinasi = lowerStruk.includes("kosong") || lowerStruk.includes("tidak ada") || lowerStruk.includes("null") || lowerStruk.includes("tidak tertera");
+        
+        if (!isHalusinasi) {
+            finalNomorInvoice = nomorStrukAI; // Gunakan hasil AI
+        }
+    }
 
     // 3. Mapping Data Payload Lanjutan
     // BLOK KODE BARU: Gunakan captionText yang sudah diekstrak kuat
@@ -1432,7 +1564,7 @@ function logImageActivity(uniqueIdB, pipelineLog, driveLink, aiExtractedData, ag
    newRow[14] = notePesan;    // Kolom O (Note)
    newRow[15] = idGroup;      // Kolom P (ID Grup)
    newRow[16] = namaGrup;     // Kolom Q (Nama Grup) <--- BARU MASUK SINI
-   newRow[17] = idUniqInv;    // Kolom R (No Inv Unik)
+   newRow[17] = finalNomorInvoice;    // Kolom R (No Inv Unik)
    newRow[18] = driveLink;    // Kolom S (Link Drive)
    newRow[19] = namaFileFull; // Kolom T (Nama File)
    newRow[20] = pipelineLog;  // Kolom U (Proses AI) 

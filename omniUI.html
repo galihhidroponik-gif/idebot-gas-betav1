@@ -139,6 +139,11 @@
                     <button onclick="fetchData()" class="hover:text-green-200 transition-colors" title="Sinkronisasi Manual">
                         <svg width="20" height="20" fill="currentColor" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/><path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/></svg>
                     </button>
+
+                    <!-- 1. Tombol Finance -->
+                    <button onclick="openFinanceModal()" class="hover:text-green-200 transition-colors" title="Finance Dashboard">
+                        <svg width="20" height="20" fill="currentColor" viewBox="0 0 16 16"><path d="M2 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H2zm4.5 13.5a.5.5 0 0 1-1 0v-4a.5.5 0 0 1 1 0v4zm3 0a.5.5 0 0 1-1 0v-6a.5.5 0 0 1 1 0v6zm3 0a.5.5 0 0 1-1 0v-8a.5.5 0 0 1 1 0v8z"/></svg>
+                    </button>
                     
                     <!-- 2. Ikon Lonceng + Notifikasi -->
                     <div class="relative flex items-center justify-center">
@@ -362,20 +367,20 @@
     // --- VARIABEL LOGIN SISTEM ---
     let loggedInUser = null;
     let isMasterAdmin = false;
+    let isCS = false; // BARU: Menampung status user CS
     let userAllowedAccounts = [];
-
     window.onload = () => {
         const input = document.getElementById('msg-input');
         input.addEventListener('input', function() {
             this.style.height = 'auto';
             this.style.height = (this.scrollHeight) + 'px';
         });
-
         // --- CEK SESI LOGIN DI LOCALSTORAGE BROWSER ---
         const savedUser = localStorage.getItem('omni_user');
         if (savedUser) {
             loggedInUser = savedUser;
             isMasterAdmin = localStorage.getItem('omni_isMaster') === 'true';
+            isCS = localStorage.getItem('omni_isCS') === 'true'; // Muat status CS
             userAllowedAccounts = JSON.parse(localStorage.getItem('omni_roles') || "[]");
             
             document.getElementById('login-modal').classList.add('hidden');
@@ -408,11 +413,13 @@
             if(res.success) {
                 loggedInUser = u;
                 isMasterAdmin = res.isMaster;
+                isCS = res.isCS || false; // Tangkap status CS dari backend
                 userAllowedAccounts = res.roles; 
                 
                 // --- SIMPAN SESI KE LOCALSTORAGE ---
                 localStorage.setItem('omni_user', u);
                 localStorage.setItem('omni_isMaster', res.isMaster);
+                localStorage.setItem('omni_isCS', isCS); // Simpan sesi CS
                 localStorage.setItem('omni_roles', JSON.stringify(res.roles));
                 
                 document.getElementById('login-modal').classList.add('hidden');
@@ -437,13 +444,36 @@
         }).verifyLoginNative(SHEET_URL, u, p);
     }
 
-    // --- FUNGSI LOGOUT BARU ---
+    // --- FUNGSI LOGOUT BARU (OPTIMIZED SPA MODE) ---
     function doLogout() {
         if(!confirm("Yakin ingin keluar dari akun ini?")) return;
+        
+        // 1. Hapus cache sesi dari browser
         localStorage.removeItem('omni_user');
         localStorage.removeItem('omni_isMaster');
+        localStorage.removeItem('omni_isCS'); // Bersihkan juga status CS
         localStorage.removeItem('omni_roles');
-        location.reload(); // Refresh halaman agar kembali ke layar login
+        
+        // 2. Reset variabel global agar memori bersih
+        loggedInUser = null;
+        isMasterAdmin = false;
+        isCS = false;
+        userAllowedAccounts = [];
+        
+        // 3. Tutup panel/chat yang sedang terbuka (Pembersihan UI)
+        closeConfigModal();
+        closeChat();
+        
+        // 4. Munculkan kembali modal login menutupi layar (Tanpa reload iframe GAS)
+        document.getElementById('login-modal').classList.remove('hidden');
+        
+        // 5. Kosongkan form input login sebelumnya
+        document.getElementById('login-user').value = "";
+        document.getElementById('login-pass').value = "";
+        
+        showToast("Anda berhasil keluar.");
+        // Ini memastikan elemen DOM bersih total dan interval timer data tidak dobel
+        window.top.location.href = GAS_URL;
     }
 
     function openChat() { document.getElementById('chat-container').classList.add('active'); }
@@ -506,12 +536,18 @@
                     document.getElementById('webhook-url-display').value = data.webhookUrl || "A2 Kosong / URL belum dideteksi";
                 }
                 let rawDevices = data.devices || []; 
-                if (!isMasterAdmin) {
+                if (typeof isCS !== 'undefined' && isCS) {
+                    // Filter CS: Hanya tampilkan device miliknya sendiri (Kolom G / Index 6 = No Server)
+                    let csNum = userAllowedAccounts[0].substring(3);
+                    deviceCache = rawDevices.filter(d => String(d.fullRow[6] || "").trim() === csNum);
+                } else if (!isMasterAdmin && typeof userAllowedAccounts !== 'undefined') {
+                    // Filter Admin Biasa: Berdasar Kolom A (Index 1)
                     deviceCache = rawDevices.filter(d => {
                         let akunDevice = String(d.fullRow[1] || "").trim();
                         return userAllowedAccounts.includes(akunDevice);
                     });
                 } else {
+                    // Master Admin
                     deviceCache = rawDevices;
                 }
                 renderDeviceList();
@@ -1174,8 +1210,16 @@
                 
                 // (Server sudah melakukan filtering, tapi kita simpan safety check ini)
                 if (!isMasterAdmin) {
-                    const akunChat = String(row[0] || "").trim();
-                    if (!userAllowedAccounts.includes(akunChat)) return false;
+                    if (typeof isCS !== 'undefined' && isCS) {
+                        // Filter khusus CS: Mencocokkan No Server (Kolom E / Index 4)
+                        const csDeviceNum = userAllowedAccounts[0].substring(3);
+                        const noServerRow = String(row[4] || "").trim();
+                        if (noServerRow !== csDeviceNum) return false;
+                    } else {
+                        // Filter Admin Biasa: Mencocokkan Akun Chat (Kolom A / Index 0)
+                        const akunChat = String(row[0] || "").trim();
+                        if (!userAllowedAccounts.includes(akunChat)) return false;
+                    }
                 }
                 return true;
             });
@@ -1743,15 +1787,43 @@ function formatRfmTextCompact(rfmLine) {
     }
 
     function selectContact(contact) {
-        currentContactId = contact.id;
-        document.getElementById('input-container').classList.remove('hidden');
-        document.getElementById('chat-name').innerText = contact.name;
-        document.getElementById('chat-id').innerText = `ID: ${contact.id}`;
-        
-        // Tampilkan tombol copy ID
-        document.getElementById('btn-copy-id').classList.remove('hidden');
+    currentContactId = contact.id;
 
-        const av = document.getElementById('chat-avatar');
+    // =====================================================================
+    // BLOK KODE BARU: FILTER ERROR 463 BERDASARKAN LABEL "ABC, GROUP, AGEN"
+    // =====================================================================
+    // 1. Standarisasi Data: Paksa jadi huruf besar (uppercase) dan buang spasi nakal di awal/akhir (trim)
+    const labelsArray = (contact.waLabel || "").toUpperCase().split(',').map(l => l.trim());
+
+    // 2. Evaluasi: Karena data sudah dipaksa jadi huruf besar, 'AEr', 'aer', atau ' aEr ' otomatis terbaca sebagai 'AER'
+    const isAllowedToReply = labelsArray.includes('ABC') || 
+                         labelsArray.includes('AE') || 
+                         labelsArray.includes('AER') || 
+                         labelsArray.includes('GROUP') || 
+                         labelsArray.includes('AGEN');
+
+    const inputContainer = document.getElementById('input-container');
+    const errorModal = document.getElementById('modal-error-463');
+
+    if (isAllowedToReply) {
+        // Punya label: Buka kotak ketik
+        inputContainer.classList.remove('hidden');
+    } else {
+        // Tidak punya label: Kunci kotak ketik & Munculkan Modal Peringatan
+        inputContainer.classList.add('hidden');
+        if (errorModal) errorModal.classList.remove('hidden');
+    }
+    // =====================================================================
+
+    document.getElementById('chat-name').innerText = contact.name;
+    document.getElementById('chat-id').innerText = `ID: ${contact.id}`;
+    
+    // Tampilkan tombol copy ID
+    document.getElementById('btn-copy-id').classList.remove('hidden');
+
+    const av = document.getElementById('chat-avatar');
+    
+    // ... (sisa kode di dalam fungsi selectContact ke bawah biarkan sama persis seperti kodemu) ...
         av.innerText = contact.name.charAt(0).toUpperCase();
         av.className = `w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg border border-white/20 ${getAvatarColorClass(contact.isMe, contact.waLabel)}`;
         
@@ -1935,14 +2007,24 @@ function formatRfmTextCompact(rfmLine) {
         if ((!text && !selectedFileData) || !currentContactId || btn.disabled) return;
         
         const row = allData.find(r => r[1] === currentContactId);
-        const waNo = currentContactId.split('.')[0].replace(/\D/g, '');
         
-        // --- PERBAIKAN FATAL INDEX ARRAY ---
-        // Sesuai dengan update getSheetData: apiKey dipindah ke r[31], apiUrl dipindah ke r[32]
+        // [BLOK KODE BARU] Parsing waNo responsif untuk Grup dan Personal
+        let waNo = currentContactId;
+        if (waNo.includes('@g.us')) {
+            // Jika Grup: Potong tepat setelah @g.us (membuang ekstensi akun admin di belakangnya)
+            waNo = waNo.split('@g.us')[0] + '@g.us';
+        } else {
+            // Jika Personal: Potong pada titik separator dan bersihkan semua karakter non-angka
+            waNo = waNo.split('.')[0].replace(/\D/g, '');
+        }
+        
+        // --- AMBIL KREDENSIAL DARI ARRAY ---
         const apiURLTarget = String(row[32] || "");
         const apiKeyTarget = String(row[31] || "");
         
+        // DETEKSI PROVIDER
         const isStarsender = apiURLTarget.toLowerCase().includes('starsender');
+        const isFonnte = apiURLTarget.toLowerCase().includes('fonnte'); // Deteksi Fonnte
         
         // 2. Tampilan Loading UI
         btn.disabled = true; btn.classList.add('opacity-70');
@@ -1950,30 +2032,43 @@ function formatRfmTextCompact(rfmLine) {
         document.getElementById('send-loading').classList.remove('hidden');
         input.disabled = true;
         
-        // 3. Susun Payload
+        // 3. Susun Payload Sesuai Provider
         let payload = {};
         if (selectedFileData) {
             if (isStarsender) {
                 payload = { "messageType": selectedFileData.type === "document" ? "document" : "media", "to": waNo, "body": text || " ", "file": "AKAN_DIISI_OLEH_GAS" };
+            } else if (isFonnte) {
+                // Payload khusus lampiran media untuk Fonnte
+                payload = { "target": waNo, "message": text || " ", "url": "AKAN_DIISI_OLEH_GAS" };
             } else {
+                // Payload OneSender
                 const mediaType = selectedFileData.type === "document" ? "document" : "image";
                 payload = { "recipient_type": "individual", "to": waNo, "type": mediaType, [mediaType]: { "link": "AKAN_DIISI_OLEH_GAS", "caption": text } };
             }
         } else {
-            payload = isStarsender ? { "messageType": "text", "to": waNo, "body": text } : { "recipient_type": "individual", "to": waNo, "type": "text", "text": { "body": text } };
+            // Pengiriman Teks Biasa
+            if (isStarsender) {
+                payload = { "messageType": "text", "to": waNo, "body": text };
+            } else if (isFonnte) {
+                // Payload khusus teks untuk Fonnte
+                payload = { "target": waNo, "message": text };
+            } else {
+                // Payload khusus teks OneSender
+                payload = { "recipient_type": "individual", "to": waNo, "type": "text", "text": { "body": text } };
+            }
         }
         
         // Data paket yang akan dikirim ke Backend
         const requestData = { 
-            apiUrl: apiURLTarget, // <-- MENGGUNAKAN VARIABEL INDEX 9 YANG SUDAH DIPERBAIKI
-            apiKey: apiKeyTarget, // <-- MENGGUNAKAN VARIABEL INDEX 8 YANG SUDAH DIPERBAIKI
+            apiUrl: apiURLTarget, 
+            apiKey: apiKeyTarget, 
             payload: payload,
             fileData: selectedFileData,
             uniqueId: currentContactId, 
             sheetInput: SHEET_URL 
         };
         
-        // 4. EKSEKUSI NATIVE JALUR DALAM (Pengganti Fetch)
+        // 4. EKSEKUSI NATIVE JALUR DALAM
         google.script.run
             .withSuccessHandler(function(responseStr) {
                 const result = JSON.parse(responseStr);
@@ -2210,6 +2305,40 @@ function openEditModal() {
     <img id="image-modal-content">
 </div>
 
+<!-- MODAL WARNING ERROR 463 MELAYANG -->
+<div id="modal-error-463" class="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[400] hidden backdrop-blur-sm transition-opacity">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden relative border border-red-100">
+        <!-- Header Modal -->
+        <div class="bg-red-50 p-4 border-b border-red-100 flex justify-between items-center">
+            <div class="flex items-center gap-2 text-red-700">
+                <svg width="20" height="20" fill="currentColor" viewBox="0 0 16 16"><path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/></svg>
+                <h3 class="font-bold text-sm">Algoritma WhatsApp: Error 463</h3>
+            </div>
+            <button onclick="document.getElementById('modal-error-463').classList.add('hidden')" class="text-red-400 hover:text-red-700 font-bold text-2xl leading-none">&times;</button>
+        </div>
+        
+        <!-- Body Modal -->
+        <div class="p-5">
+            <p class="text-gray-600 text-xs mb-4 leading-relaxed">
+                Error 463 merupakan mekanisme keamanan <em class="font-semibold">trust/privacy policy</em> dari WhatsApp terhadap pengiriman pesan ke kontak baru melalui <em class="font-semibold">Linked Device</em> (WhatsApp Web, Desktop, atau API).
+            </p>
+            
+            <div class="bg-gray-50 rounded-xl p-4 border border-gray-100">
+                <h5 class="font-extrabold text-gray-700 text-[11px] mb-2 uppercase tracking-wide flex items-center gap-1">
+                    <span>💡</span> Solusi:
+                </h5>
+                <ol class="list-decimal pl-4 text-gray-600 text-[11px] space-y-2 font-medium">
+                    <li>Mulai <strong>pesan pertama</strong> ke nomor ini menggunakan aplikasi WhatsApp di HP Android/iPhone.</li>
+                    <li>Tunggu hingga customer <strong>membalas pesan</strong>. Maka perlindungan anti-spam ini akan otomatis hilang.</li>
+                    <li><strong>Opsi Cepat Bypass:</strong> Klik foto profil di atas, lalu tambahkan label <span class="bg-white border border-gray-200 px-1.5 py-0.5 rounded text-red-500 font-bold shadow-sm">ABC</span>, <span class="bg-white border border-gray-200 px-1.5 py-0.5 rounded text-red-500 font-bold shadow-sm">Group</span>, atau <span class="bg-white border border-gray-200 px-1.5 py-0.5 rounded text-red-500 font-bold shadow-sm">Agen</span>.</li>
+                </ol>
+            </div>
+            
+            <button onclick="document.getElementById('modal-error-463').classList.add('hidden')" class="w-full mt-5 bg-red-500 text-white py-3 rounded-xl font-bold text-sm shadow-md hover:bg-red-600 transition-colors">Saya Mengerti</button>
+        </div>
+    </div>
+</div>
+
 <div id="edit-modal" class="fixed inset-0 bg-black/60 flex items-center justify-center p-6 z-[200] hidden backdrop-blur-sm">
     <div class="bg-white rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden">
         <div class="bg-[#008069] p-4 text-white font-bold flex justify-between items-center">
@@ -2265,9 +2394,10 @@ function openEditModal() {
                         <option value="5" selected>Grid 5</option>
                     </select>
                     
-                    <!-- Tombol Tambah Baru (Ikon Plus Saja) -->
+                    <!-- Tombol Tambah Baru dinonaktifka (Ikon Plus Saja) 
                     <button onclick="openDevForm()" class="bg-white/20 hover:bg-white/30 text-white rounded-full w-7 h-7 flex items-center justify-center transition-colors shadow-sm" title="Tambah Device Baru">
-                        <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/></svg>
+                        <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/></svg> -->
+
                     </button>
                 </div>
 
@@ -2551,7 +2681,7 @@ function openEditModal() {
         <!-- No Server -->
         <div>
             <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
-                No Server (G)
+                No Server = Username Login CS (G)
                 <svg onclick="showTooltip('No Server (G)', 'Nomor WA device admin yang dikoneksikan ke starsender/onesender berawalan 62 tanpa spasi atau tanda + (Contoh: 6281234...).')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
             </label>
             <input type="text" id="dev-col-6" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none">
@@ -2560,7 +2690,7 @@ function openEditModal() {
         <!-- BSUID -->
         <div>
             <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
-                BSUID (H)
+                BSUID = Password Login CS (H)
                 <svg onclick="showTooltip('BSUID (H)', 'ID identitas unik dari server WhatsApp (Opsional/Bisa dikosongkan).')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
             </label>
             <input type="text" id="dev-col-7" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none">
@@ -2687,6 +2817,217 @@ function openEditModal() {
         </div>
     </div>
 </div>
+
+<style>
+    @media print {
+        body * { visibility: hidden; }
+        #finance-modal, #finance-modal * { visibility: visible; }
+        #finance-modal { position: absolute; left: 0; top: 0; width: 100%; max-height: none; overflow: visible; background: white; }
+        .no-print { display: none !important; }
+    }
+</style>
+
+<div id="finance-modal" class="fixed inset-0 bg-gray-100 z-[500] hidden flex-col w-full h-full">
+    <div class="bg-[#008069] p-4 text-white flex justify-between items-center shadow-md no-print">
+        <h2 class="font-bold text-xl">📊 Finance Dashboard</h2>
+        <div class="flex gap-3">
+            <button onclick="window.print()" class="bg-white/20 hover:bg-white/30 px-3 py-1 rounded text-sm font-bold transition-colors">🖨️ Print PDF</button>
+            <button onclick="document.getElementById('finance-modal').classList.add('hidden')" class="text-white hover:text-red-300 text-2xl font-bold leading-none">&times;</button>
+        </div>
+    </div>
+
+    <div class="flex-1 overflow-y-auto p-4 space-y-4">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4" id="finance-analytics">
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-200">
+                <h4 class="text-xs font-bold text-gray-500 uppercase border-b pb-1 mb-2">Status (Total Nilai)</h4>
+                <div id="ana-status" class="text-sm space-y-1">Memuat...</div>
+            </div>
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-200">
+                <h4 class="text-xs font-bold text-gray-500 uppercase border-b pb-1 mb-2">Jenis</h4>
+                <div id="ana-jenis" class="text-sm space-y-1">Memuat...</div>
+            </div>
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-200">
+                <h4 class="text-xs font-bold text-gray-500 uppercase border-b pb-1 mb-2">Kategori</h4>
+                <div id="ana-kategori" class="text-sm space-y-1">Memuat...</div>
+            </div>
+        </div>
+
+        <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-200 no-print flex flex-wrap gap-2 items-end">
+            <div class="flex-1 min-w-[200px]">
+                <label class="text-[10px] font-bold text-gray-500 uppercase">Cari (ID, Nama, Item)</label>
+                <input type="text" id="fin-search" oninput="renderFinanceTable()" class="w-full bg-gray-50 border border-gray-200 p-2 rounded text-sm outline-none focus:border-[#008069]" placeholder="Ketik kata kunci...">
+            </div>
+            <div>
+                <label class="text-[10px] font-bold text-gray-500 uppercase">Status</label>
+                <select id="fin-filter-status" onchange="renderFinanceTable()" class="w-full bg-gray-50 border border-gray-200 p-2 rounded text-sm outline-none">
+                    <option value="Semua">Semua</option>
+                    <option value="pending">Pending</option>
+                    <option value="reject">Reject</option>
+                    <option value="pemasukan">Pemasukan</option>
+                    <option value="pengeluaranb">Pengeluaran B</option>
+                </select>
+            </div>
+            <button onclick="loadFinanceData()" class="bg-[#008069] text-white px-4 py-2 rounded font-bold text-sm shadow hover:bg-green-700">Refresh Data</button>
+        </div>
+
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
+            <table class="w-full text-left text-sm whitespace-nowrap">
+                <thead class="bg-gray-50 border-b border-gray-200 text-gray-600">
+                    <tr>
+                        <th class="p-3">Tgl (I)</th>
+                        <th class="p-3">ID / Konsumen (D,E)</th>
+                        <th class="p-3">Inv (R)</th>
+                        <th class="p-3">Item Detail (J)</th>
+                        <th class="p-3">Total (N)</th>
+                        <th class="p-3">Status (F)</th>
+                        <th class="p-3 text-center no-print">Aksi</th>
+                    </tr>
+                </thead>
+                <tbody id="finance-table-body" class="divide-y divide-gray-100">
+                    <tr><td colspan="7" class="p-5 text-center text-gray-400">Silakan Refresh Data...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    // --- STATE FINANCE ---
+    let financeDataCache = []; 
+
+    function openFinanceModal() {
+        document.getElementById('finance-modal').classList.remove('hidden');
+        if(financeDataCache.length === 0) loadFinanceData();
+    }
+
+    function loadFinanceData() {
+        const tbody = document.getElementById('finance-table-body');
+        // FIX VISUAL: Menggunakan spinner Tailwind berwarna hijau tebal agar terlihat di background putih
+        tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center"><div class="animate-spin rounded-full h-8 w-8 border-b-4 border-[#008069] mx-auto"></div><p class="text-xs text-gray-500 mt-3 font-bold">Menarik data dari server...</p></td></tr>';
+        
+        google.script.run
+            .withSuccessHandler(data => {
+                if (!data || !Array.isArray(data)) {
+                    financeDataCache = [];
+                    showToast("Sheet Finance kosong / tidak ditemukan.");
+                } else {
+                    financeDataCache = data;
+                }
+                renderFinanceTable();
+            })
+            .withFailureHandler(err => {
+                showToast("Gagal memuat data finance!");
+                // Jika script backend belum di-deploy/missing, UI akan menampilkan teks error merah ini
+                tbody.innerHTML = '<tr><td colspan="7" class="p-5 text-center text-red-500 font-bold bg-red-50">❌ Error: Skrip backend menolak permintaan. Pastikan router terpasang di code.gs!</td></tr>';
+            })
+            .getFinanceDataMaster(SHEET_URL); 
+    }
+
+    function renderFinanceTable() {
+    const tbody = document.getElementById('finance-table-body');
+    
+    if (!financeDataCache || financeDataCache.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="p-5 text-center text-gray-400 italic">Belum ada data transaksi atau Sheet Finance kosong.</td></tr>';
+        document.getElementById('ana-status').innerHTML = '-';
+        document.getElementById('ana-jenis').innerHTML = '-';
+        document.getElementById('ana-kategori').innerHTML = '-';
+        return;
+    }
+
+    const searchKw = document.getElementById('fin-search').value.toLowerCase();
+    const statFilter = document.getElementById('fin-filter-status').value.toLowerCase();
+    
+    tbody.innerHTML = "";
+    let analytics = { status: {}, jenis: {}, kategori: {} };
+
+    financeDataCache.forEach(item => {
+        const row = item.values;       // <-- Ambil array baris asli
+        const rowIndex = item.rowIndex; // <-- Ambil nomor baris asli yang dijamin aman
+        
+        const id = String(row[3] || "").toLowerCase();
+        const kons = String(row[4] || "").toLowerCase();
+        const itemStr = String(row[9] || "");
+        const stat = String(row[5] || "");
+        const total = parseFloat(row[13]) || 0;
+        const jenis = String(row[6] || "");
+        const kat = String(row[7] || "");
+        
+        if(statFilter !== "semua" && stat.toLowerCase() !== statFilter) return;
+        if(searchKw && !(id.includes(searchKw) || kons.includes(searchKw) || itemStr.toLowerCase().includes(searchKw))) return;
+
+        analytics.status[stat] = (analytics.status[stat] || 0) + total;
+        analytics.jenis[jenis] = (analytics.jenis[jenis] || 0) + total;
+        analytics.kategori[kat] = (analytics.kategori[kat] || 0) + total;
+
+        let itemHtml = "";
+        const itemMatches = itemStr.match(/\{.*?\}/g);
+        if(itemMatches) {
+            itemHtml = '<ul class="text-[10px] space-y-1 list-disc pl-3 text-gray-600">';
+            itemMatches.forEach(i => {
+                let clean = i.replace(/[{}]/g, '').split(',');
+                if(clean.length >= 4) {
+                    itemHtml += `<li><b>${clean[0].trim()}</b> - ${clean[1].trim()}x @Rp${clean[2].trim()} = Rp${clean[3].trim()}</li>`;
+                }
+            });
+            itemHtml += '</ul>';
+        } else {
+            itemHtml = `<span class="text-[11px] text-gray-500">${itemStr}</span>`;
+        }
+
+        let waClean = row[3] ? String(row[3]).split('.')[0].replace(/\D/g, '') : "";
+        let btnVerify = stat.toLowerCase() === 'pending' 
+            ? `<a href="https://wa.me/${waClean}" target="_blank" class="text-blue-500 hover:text-blue-700 mx-1" title="Verifikasi WA">✅</a>` : '';
+
+        // Gunakan rowIndex yang dikirim dari objek backend
+        let btnQuick = `
+            <select onchange="updateFinanceStatus('${rowIndex}', this.value)" class="text-[10px] border border-gray-200 rounded p-1 ml-1 bg-gray-50 cursor-pointer">
+                <option value="">Ubah</option>
+                <option value="Pemasukan">Pemasukan</option>
+                <option value="Reject">Reject</option>
+            </select>
+        `;
+
+        tbody.innerHTML += `
+            <tr class="hover:bg-gray-50">
+                <td class="p-3">${row[8] || '-'}</td>
+                <td class="p-3">
+                    <div class="font-bold text-gray-800">${row[4] || '-'}</div>
+                    <div class="text-[9px] text-gray-500">${row[3] || '-'}</div>
+                </td>
+                <td class="p-3 text-[10px]">${row[17] || '-'}</td>
+                <td class="p-3">${itemHtml}</td>
+                <td class="p-3 font-bold text-[#008069]">Rp ${total.toLocaleString('id-ID')}</td>
+                <td class="p-3"><span class="bg-gray-100 px-2 py-1 rounded text-[10px] font-bold uppercase">${stat}</span></td>
+                <td class="p-3 text-center no-print">
+                    <a href="${row[18] || '#'}" target="_blank" class="text-gray-500 hover:text-gray-800 mx-1" title="Lihat Drive">📁</a>
+                    ${btnVerify}
+                    ${btnQuick}
+                </td>
+            </tr>
+        `;
+    });
+
+    const renderObj = (obj, targetId) => {
+        let html = '';
+        Object.entries(obj).sort((a,b) => b[1] - a[1]).forEach(([k, v]) => {
+            if(k) html += `<div class="flex justify-between border-b border-gray-50 py-0.5"><span class="text-[11px]">${k}</span><span class="font-bold text-[11px]">Rp ${v.toLocaleString('id-ID')}</span></div>`;
+        });
+        document.getElementById(targetId).innerHTML = html || '<span class="text-gray-400 text-xs">Tidak ada data</span>';
+    };
+    renderObj(analytics.status, 'ana-status');
+    renderObj(analytics.jenis, 'ana-jenis');
+    renderObj(analytics.kategori, 'ana-kategori');
+}
+
+    function updateFinanceStatus(rowIndex, newStatus) {
+        if(!newStatus) return;
+        showToast("Memperbarui status...");
+        google.script.run
+            .withSuccessHandler(res => { showToast(res); loadFinanceData(); })
+            .withFailureHandler(err => showToast("Gagal update"))
+            .updateFinanceRowStatus(SHEET_URL, rowIndex, newStatus);
+    }
+</script>
 
 </body>
 </html>

@@ -1852,3 +1852,47 @@ function updateFinanceRowStatus(sheetUrl, rowIndex, newStatus) {
     throw new Error(e.message);
   }
 }
+
+// =========================================================================
+// GETTER FINANCE UNTUK UI (BATCH READ + CACHE, HINDARI QUOTA LIMIT)
+// =========================================================================
+function getFinanceData(sheetInput, forceRefresh) {
+  try {
+    let clientSheetId = sheetInput.match(/\/d\/([a-zA-Z0-9-_]+)/) 
+      ? sheetInput.match(/\/d\/([a-zA-Z0-9-_]+)/)[1] 
+      : sheetInput;
+
+    const cache = CacheService.getScriptCache();
+    const cacheKey = "finance_" + clientSheetId;
+
+    if (!forceRefresh) {
+      const cached = cache.get(cacheKey);
+      if (cached) return JSON.parse(cached); // Hemat 1 round-trip Sheets API
+    }
+
+    const ss = SpreadsheetApp.openById(clientSheetId); // openById lebih cepat dari openByUrl
+    const sheet = ss.getSheetByName("Finance");
+
+    // PENTING: Jangan lempar error jika sheet belum ada.
+    // Kirim status jelas ke UI, bukan exception mentah.
+    if (!sheet) {
+      return { exists: false, rows: [], message: "Belum ada transaksi Finance tercatat." };
+    }
+
+    const lastRow = sheet.getLastRow();
+    if (lastRow <= 1) {
+      return { exists: true, rows: [], message: "Sheet Finance kosong." };
+    }
+
+    // Batch read sekaligus, bukan getRange per baris
+    const data = sheet.getRange(2, 1, lastRow - 1, 14).getDisplayValues();
+
+    const result = { exists: true, rows: data, message: "OK" };
+    cache.put(cacheKey, JSON.stringify(result), 60); // TTL 60 detik, cukup untuk data finance
+
+    return result;
+  } catch (e) {
+    // Selalu kembalikan objek terstruktur, jangan biarkan UI menerima raw error
+    return { exists: false, rows: [], message: "Error: " + e.message };
+  }
+}

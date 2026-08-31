@@ -185,6 +185,67 @@ function saveDeviceDataNative(sheetInput, index, dataObj) { return OmniBot.saveD
 function deleteDeviceFromUI(sheetInput, index) { return OmniBot.deleteDeviceFromUI(sheetInput, index); }
 function searchContactNative(sheetInput, keyword) { return OmniBot.searchContactNative(sheetInput, keyword); }
 
+// =========================================================================
+// [JEMBATAN ROUTER UI FINANCE]
+// =========================================================================
+// =========================================================================
+// [MODUL CLIENT-SIDE SELF-HEALING] - CEK & BUAT SHEET FINANCE OTOMATIS
+// =========================================================================
+function checkAndCreateFinanceSheet_(sheetUrl) {
+  try {
+    var ss = sheetUrl ? SpreadsheetApp.openByUrl(sheetUrl) : SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = null;
+    var sheets = ss.getSheets();
+    
+    // Cari tab sheet bernama "Finance" secara case-insensitive
+    for (var i = 0; i < sheets.length; i++) {
+      if (sheets[i].getName().trim().toLowerCase() === "finance") {
+        sheet = sheets[i];
+        break;
+      }
+    }
+    
+    // Jika tab Finance tidak ada, buat secara otomatis dengan 22 Header baku
+    if (!sheet) {
+      sheet = ss.insertSheet("Finance");
+      sheet.appendRow([
+        "Timestaps", "Akun", "Agen", "ID Networking", "Nama Konsumen", 
+        "Status", "Jenis", "Kategori", "Tgl Transaksi", "Nama Item", 
+        "Qty", "Satuan", "Harga Satuan", "Total", "Note", 
+        "Id Group", "Nama Group", "No Inv", "Link Drive", "Nama File", "Proses AI", "Bulan"
+      ]);
+      Logger.log("✅ Tab 'Finance' berhasil dibuat otomatis di spreadsheet klien.");
+    }
+    return sheet;
+  } catch (e) {
+    Logger.log("❌ Gagal inisialisasi sheet Finance: " + e.message);
+    return null;
+  }
+}
+
+// JEMBATAN ROUTER UI FINANCE DENGAN AUTO-HEALING KLIEN
+function getFinanceDataMaster(sheetUrl) { 
+  if (typeof OmniBot === 'undefined') return [];
+  
+  // Lakukan pengecekan dan pembuatan sheet otomatis di sisi klien sebelum ditarik master
+  checkAndCreateFinanceSheet_(sheetUrl);
+  
+  return OmniBot.getFinanceDataMaster(sheetUrl); 
+}
+
+function updateFinanceRowStatus(sheetUrl, rowIndex, newStatus) { 
+  if (typeof OmniBot === 'undefined') return "error: Library Missing";
+  
+  // Pastikan sheet ada sebelum update status
+  checkAndCreateFinanceSheet_(sheetUrl);
+  
+  return OmniBot.updateFinanceRowStatus(sheetUrl, rowIndex, newStatus); 
+}
+
+// =========================================================================
+// [BARU] FUNGSI HAPUS PROFIL KONTAK (EKSEKUSI NATIVE)
+// =========================================================================
+
 
 // =========================================================================
 // [BARU] FUNGSI HAPUS PROFIL KONTAK (EKSEKUSI NATIVE)

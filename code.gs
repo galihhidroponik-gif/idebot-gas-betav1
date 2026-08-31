@@ -242,9 +242,11 @@ function updateFinanceRowStatus(sheetUrl, rowIndex, newStatus) {
   return OmniBot.updateFinanceRowStatus(sheetUrl, rowIndex, newStatus); 
 }
 
-// =========================================================================
-// [BARU] FUNGSI HAPUS PROFIL KONTAK (EKSEKUSI NATIVE)
-// =========================================================================
+// Jembatan ringan ke Library Master — pola sama persis dengan getSheetData/getAvailableLabels
+function getFinanceData(sheetInput, forceRefresh) {
+  if (typeof OmniBot === 'undefined') return { exists: false, rows: [], message: "Library belum terpasang" };
+  return OmniBot.getFinanceData(sheetInput, forceRefresh);
+}
 
 
 // =========================================================================

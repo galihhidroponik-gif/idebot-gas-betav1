@@ -2923,6 +2923,22 @@ function openEditModal() {
             .getFinanceDataMaster(SHEET_URL); 
     }
 
+
+    function fetchFinanceData(forceRefresh = false) {
+    google.script.run
+        .withSuccessHandler(function(res) {
+            if (!res.exists) {
+                showToast(res.message); // Tampilkan pesan ramah, bukan error mentah
+                return;
+            }
+            renderFinanceTable(res.rows); // fungsi render kamu buat sesuai kolomnya
+        })
+        .withFailureHandler(function(e) {
+            showToast("Gagal memuat data Finance dari server.");
+        })
+        .getFinanceData(SHEET_URL, forceRefresh);
+}
+
     function renderFinanceTable() {
     const tbody = document.getElementById('finance-table-body');
     

@@ -1832,3 +1832,73 @@ function dailyCRMSync(clientSheetId) {
     lock.releaseLock();
   }
 }
+
+// =========================================================================
+// [BLOK KODE BARU] ENDPOINT UI FINANCE (SIMPAN DI ACTIONKIRIM.GS)
+// =========================================================================
+
+function getFinanceDataMaster(sheetUrl) {
+  try {
+    const ss = SpreadsheetApp.openByUrl(sheetUrl);
+    
+    // Deteksi tab sheet "Finance" secara fleksibel
+    let sheet = null;
+    const sheets = ss.getSheets();
+    for (let s of sheets) {
+      if (s.getName().trim().toLowerCase() === "finance") {
+        sheet = s;
+        break;
+      }
+    }
+    
+    // Self-Healing: Jika sheet Finance belum ada
+    if (!sheet) {
+      sheet = ss.insertSheet("Finance");
+      sheet.appendRow([
+        "Timestaps", "Akun", "Agen", "ID Networking", "Nama Konsumen", 
+        "Status", "Jenis", "Kategori", "Tgl Transaksi", "Nama Item", 
+        "Qty", "Satuan", "Harga Satuan", "Total", "Note", 
+        "Id Group", "Nama Group", "No Inv", "Link Drive", "Nama File", "Proses AI", "Bulan"
+      ]);
+    }
+    
+    // BATCH PROCESSING: WAJIB getDisplayValues() agar Date jadi String dan aman ke Frontend UI
+    const data = sheet.getDataRange().getDisplayValues();
+    if (data.length <= 1) return []; // Hanya ada header
+    
+    let result = [];
+    // LIMITASI UI: Maksimal 500 baris transaksi terakhir untuk mencegah browser lag/timeout
+    const startRow = Math.max(1, data.length - 500); 
+    
+    // Looping reverse (Terbaru di atas)
+    for (let i = data.length - 1; i >= startRow; i--) {
+      result.push({
+        rowIndex: i + 1,  // Format Object yang benar agar tidak lost saat serialisasi JSON
+        values: data[i]
+      });
+    }
+    return result;
+    
+  } catch(e) {
+    Logger.log("Error getFinanceDataMaster: " + e.message);
+    return [];
+  }
+}
+
+function updateFinanceRowStatus(sheetUrl, rowIndex, newStatus) {
+  try {
+    const ss = SpreadsheetApp.openByUrl(sheetUrl);
+    let sheet = null;
+    ss.getSheets().forEach(s => {
+      if (s.getName().trim().toLowerCase() === "finance") sheet = s;
+    });
+    
+    if (!sheet) throw new Error("Sheet Finance tidak ditemukan.");
+    
+    // Kolom F (Status) berada pada indeks kolom ke-6, Update secepat kilat O(1)
+    sheet.getRange(parseInt(rowIndex), 6).setValue(newStatus);
+    return "Status transaksi berhasil diperbarui!";
+  } catch(e) {
+    throw new Error(e.message);
+  }
+}

@@ -76,7 +76,8 @@ var globalAI = {
     // Mapping Provider (A34:Q -> Index 33 sampai baris terakhir)
     for (var i = 33; i < settingMatrix.length; i++) {
       var r = settingMatrix[i];
-      var key = safeTrim(r[0]);
+      // [MODIFIKASI] Gunakan Nomor Server (Kolom G / Index 6) sebagai Key utama, dibersihkan jadi angka murni
+      var key = String(r[6]).replace(/\D/g, ''); 
       if (key) {
         providerMap[key] = {
           settingRow: i + 1, // <--- TAMBAHAN: Menyimpan nomor baris posisi device di Sheet Setting
@@ -222,8 +223,10 @@ var globalAI = {
       for (var i = 0; i < this.cacheMessage.length; i++) {
         var authHeader = this.apiKeys[i];
         
-        // Deteksi jika OneSender dan belum ada kata 'Bearer ', tambahkan 'Bearer '
-        if (this.apiUrls[i].toLowerCase().indexOf("starsender") === -1 && !authHeader.startsWith("Bearer ")) {
+        // [MODIFIKASI 1] Header Batching (Area StarSender.flush)
+        var urlLower = this.apiUrls[i].toLowerCase();
+        // Cegah penambahan "Bearer " jika provider adalah Starsender atau Fonnte
+        if (urlLower.indexOf("starsender") === -1 && urlLower.indexOf("fonnte") === -1 && !authHeader.startsWith("Bearer ")) {
           authHeader = "Bearer " + authHeader;
         }
 
@@ -290,8 +293,18 @@ var globalAI = {
 
     var statusQueueMode = safeTrim(rowArr[2]).toLowerCase(); // Kolom C
     var historyMsgData = safeTrim(rowArr[3]); // Kolom D
-    var providerID = safeTrim(rowArr[7]); // Kolom H
+    var kolomH_unused = safeTrim(rowArr[7]); // Kolom H (dibiarkan bebas untuk difungsikan ke hal lain)
     var nilaiBaru = toAngkaInt(rowArr[8]); // Kolom I
+    
+    // [MODIFIKASI] Ekstrak Nomor Device langsung dari reportID (Kolom A)
+    // Contoh target: "6285249302700.@admin62895405764292" -> Diekstrak jadi "62895405764292"
+    var providerID = "";
+    if (reportID.indexOf(".@admin") !== -1) {
+        providerID = reportID.split(".@admin")[1].replace(/\D/g, '');
+    } else if (reportID.indexOf(".") !== -1) {
+        // Fallback jika format dipisah titik biasa (tanpa @admin)
+        providerID = reportID.split(".")[1].replace(/\D/g, '');
+    }
     
     // ========================================================================
     // MODIFIKASI: Deteksi Grup Lebih Awal dari Kolom A untuk Kebutuhan Bypass
@@ -376,6 +389,7 @@ var globalAI = {
       // var recipientDigits = autoPrefixPhone(digits.join('')); 
 
       var isStarsender = provider.apiUrl.toLowerCase().indexOf("starsender") !== -1;
+      var isFonnte = provider.apiUrl.toLowerCase().indexOf("fonnte") !== -1; // <-- Deteksi Fonnte
       Logger.log("👀 DEBUG URL API Provider (" + providerID + "): [" + provider.apiUrl + "]");
       
       // ========================================================================
@@ -437,15 +451,17 @@ var globalAI = {
       }
 
       var hasilCek = true;
-      if (skipCekWA) {
-          // Log Bypass dicetak rapi di sini
+     if (skipCekWA) {
           Logger.log("⏩ [Cek WA] Bypass pengecekan API. Alasan: " + alasanBypass);
-          hasilCek = true; // Langsung lolos tanpa tembak API WhatsApp
+          hasilCek = true; 
       } else {
-          // Jika gagal bypass, baru sistem menguji nomor via API resmi
-          Logger.log("🔎 [Cek WA] Menguji nomor " + recipientDigits + " (Is Starsender: " + isStarsender + ")...");
+          Logger.log("🔎 [Cek WA] Menguji nomor " + recipientDigits + "...");
           if (isStarsender) {
               hasilCek = cekNomorStarsender(recipientDigits, provider.apiKey);
+          } else if (isFonnte) {
+              // Fonnte tidak butuh cek WA dinamis / tidak ada endpoint di dokumentasi saat ini
+              Logger.log("⏩ [Cek WA] Fonnte terdeteksi, bypass pengecekan otomatis.");
+              hasilCek = true; 
           } else {
               hasilCek = cekNomorOneSender(recipientDigits, provider.apiKey, provider.prefixUrl);
           }
@@ -922,13 +938,13 @@ var globalAI = {
         var historyGemiMode = ""; // Sesuai aturan arsitektur batching 4 elemen
         aiLogDataUpdate = [aiLabel, teksYangDibacaGemini, resumeAi, rawResponse];
 
-       // --- 4. UPDATE KE SHEET Networking (LOGIKA PERSONAL KOLOM AF) ---
-        Logger.log("🗓️ [PROSES 4] Menghitung jadwal Reminder dari Kolom AF Networking.");
+       // --- 4. UPDATE KE SHEET Networking (LOGIKA PERSONAL KOLOM AA) ---
+        Logger.log("🗓️ [PROSES 4] Menghitung jadwal Reminder dari Kolom AA Networking.");
         
-        // MENGAMBIL DAY REMINDER DARI KOLOM AF NETWORKING (Indeks Array ke-31)
+        // MENGAMBIL DAY REMINDER DARI KOLOM AA NETWORKING (Indeks Array ke-26)
         var rawDayReminder = 0;
-        if (NetworkingMatrix[targetNetworkingRow - 1] && NetworkingMatrix[targetNetworkingRow - 1][31]) {
-            rawDayReminder = NetworkingMatrix[targetNetworkingRow - 1][31];
+        if (NetworkingMatrix[targetNetworkingRow - 1] && NetworkingMatrix[targetNetworkingRow - 1][26]) {
+            rawDayReminder = NetworkingMatrix[targetNetworkingRow - 1][26];
         }
         
         var hariTambah = toAngkaInt(rawDayReminder);
@@ -937,20 +953,23 @@ var globalAI = {
         if (hariTambah <= 0) {
             hariTambah = 30;
         }
-
         Logger.log("⏳ Nilai Hari Tambahan untuk baris ini: " + hariTambah + " hari.");
-
-        // LOGIKA PENULISAN AC (29) dan AD (30) DIBUAT JADI SATU BARIS
+        
+        // LOGIKA PENULISAN AB (28) dan AC (29) DIBUAT JADI SATU BARIS
         var d = new Date(); 
         d.setDate(d.getDate() + hariTambah);
         var tglReminder = Utilities.formatDate(d, ss.getSpreadsheetTimeZone(), "yyyy-MM-dd HH:mm:ss");
-        var nilaiLama = 0;
-        if (NetworkingMatrix[targetNetworkingRow - 1] && NetworkingMatrix[targetNetworkingRow - 1][28]) {
-            nilaiLama = toAngkaInt(NetworkingMatrix[targetNetworkingRow - 1][28]);
-        }
-        var totalAC = nilaiLama + ((Number(nilaiBaru) > 0) ? 1 : 0);
         
-        BatchManager.pushNet(targetNetworkingRow, 29, [[totalAC, tglReminder]]); 
+        var nilaiLama = 0;
+        // Mengambil histori nilai FUF lama dari KOLOM AB (Indeks Array ke-27)
+        if (NetworkingMatrix[targetNetworkingRow - 1] && NetworkingMatrix[targetNetworkingRow - 1][27]) {
+            nilaiLama = toAngkaInt(NetworkingMatrix[targetNetworkingRow - 1][27]);
+        }
+        var totalAB = nilaiLama + ((Number(nilaiBaru) > 0) ? 1 : 0);
+        
+        // BatchManager.pushNet (Baris Target, Kolom Mulai, [[Data1, Data2]])
+        // Karena kolom mulai adalah 28 (AB), maka totalAB akan di tulis ke AB dan tglReminder otomatis masuk ke kolom AC
+        BatchManager.pushNet(targetNetworkingRow, 28, [[totalAB, tglReminder]]);
         
         Logger.log("✅ [PROSES 4] Update Networking Kolom AC & AD selesai (Masuk Antrean Batch).");
       }
@@ -958,27 +977,32 @@ var globalAI = {
       // --- PUSH KE SERVER ---
       var msg = {};
       var finalApiUrl = provider.apiUrl; // Variabel penampung URL yang bisa diubah
+var msg = {};
+      var finalApiUrl = provider.apiUrl; 
 
       if (isStarsender) {
         msg = (messageType === 'text' || !mediaLink) ? 
           { "messageType": "text", "body": messageBuilt, "to": recipientDigits } : 
           { "messageType": "media", "body": messageBuilt, "file": mediaLink, "to": recipientDigits };
           
-        // ===============================================================
-        // MODIFIKASI: Ubah endpoint URL Starsender khusus untuk Grup
-        // ===============================================================
         if (isGroup) {
-          // Jika URL dasar di Sheet Setting berakhiran "/send", tambahkan "/grup"
-          if (finalApiUrl.endsWith("/send")) {
-            finalApiUrl = finalApiUrl + "/grup";
-          } else if (finalApiUrl.indexOf("/send/grup") === -1) {
-            // Berjaga-jaga jika format penulisan di Sheet Setting ada garis miring ekstra
-            finalApiUrl = finalApiUrl.replace(/\/$/, "") + "/grup";
-          }
+          if (finalApiUrl.endsWith("/send")) { finalApiUrl = finalApiUrl + "/grup"; } 
+          else if (finalApiUrl.indexOf("/send/grup") === -1) { finalApiUrl = finalApiUrl.replace(/\/$/, "") + "/grup"; }
+        }
+        
+      } else if (isFonnte) {
+        // Build payload khusus Fonnte (Otomatis akan di-stringify oleh BatchManager)
+        msg = {
+          "target": recipientDigits,
+          "message": messageBuilt
+        };
+        // Fonnte support pengiriman media cukup dengan menyisipkan URL
+        if (mediaLink && mediaLink !== "") {
+          msg["url"] = mediaLink;
         }
         
       } else {
-        // Pilihan untuk OneSender
+        // Fallback ke OneSender
         msg = (messageType === 'text' || !mediaLink) ? 
           buildOneSenderText(recipientDigits, messageBuilt, isGroup) : 
           buildOneSenderImage(recipientDigits, mediaLink, messageBuilt, isGroup);
@@ -1333,16 +1357,19 @@ function getSheetData(sheetUrl, userAccountsStr) {
       if (lastSetRow >= 34) {
         var settingData = tabSetting.getRange(34, 1, lastSetRow - 33, 10).getDisplayValues();
         for (var i = 0; i < settingData.length; i++) {
-          var devName = String(settingData[i][0]).trim(); // Kolom A (Nama Device)
+          // Ganti dari Kolom A ke Kolom G (Nomor Device) sebagai Key yang jauh lebih solid
+          var devNum = String(settingData[i][6]).replace(/\D/g, ''); 
           var rasioVal = String(settingData[i][3]).replace(/[^0-9.]/g, ''); // Kolom D (Rasio)
           var apiKeyStr = String(settingData[i][8]).trim(); // Kolom I (API Key)
           var apiUrlStr = String(settingData[i][9]).trim(); // Kolom J (API URL)
           
-          deviceConfig[devName] = {
-            rasio: parseFloat(rasioVal) || 0,
-            apiKey: apiKeyStr,
-            apiUrl: apiUrlStr
-          };
+          if (devNum) {
+            deviceConfig[devNum] = {
+              rasio: parseFloat(rasioVal) || 0,
+              apiKey: apiKeyStr,
+              apiUrl: apiUrlStr
+            };
+          }
         }
       }
     }
@@ -1367,27 +1394,41 @@ function getSheetData(sheetUrl, userAccountsStr) {
     }
     
     // =========================================================
-    // BARU: SERVER SIDE FILTERING BERDASARKAN ROLE
+    // BARU: SERVER SIDE FILTERING BERDASARKAN ROLE & CS
     // =========================================================
     var allowedAccounts = [];
     var isMaster = false;
+    var isCS = false;
+    var csDeviceNum = "";
     
     // Mengurai parameter string menjadi array jika ada
     if (userAccountsStr) {
       allowedAccounts = userAccountsStr.split(",").map(function(s) { return s.trim(); });
       isMaster = allowedAccounts.includes("Master Admin");
+      
+      // Deteksi jika role yang dikirim adalah khusus CS (Format: "CS:NomorServer")
+      if (allowedAccounts.length === 1 && allowedAccounts[0].indexOf("CS:") === 0) {
+          isCS = true;
+          csDeviceNum = allowedAccounts[0].substring(3);
+      }
     } else {
-      isMaster = true; // Jika dipanggil tanpa parameter (misal testing), anggap Master
+      isMaster = true; // Jika dipanggil tanpa parameter, anggap Master
     }
-
     var filteredRows = rows;
     
-    // Jika BUKAN Master Admin, filter data berdasarkan Kolom A (Akun)
-    if (!isMaster && allowedAccounts.length > 0) {
-      filteredRows = rows.filter(function(r) {
-        var akunChat = String(r[0] || "").trim(); // Kolom A (Akun)
-        return allowedAccounts.includes(akunChat);
-      });
+    if (!isMaster) {
+      if (isCS) {
+          // Filter CS: Hanya melihat data yang No Servernya (Kolom E / Index 4) cocok
+          filteredRows = rows.filter(function(r) {
+              return String(r[4] || "").trim() === csDeviceNum;
+          });
+      } else if (allowedAccounts.length > 0) {
+          // Filter Admin Biasa: Melihat berdasarkan Kolom A (Akun Chat)
+          filteredRows = rows.filter(function(r) {
+              var akunChat = String(r[0] || "").trim(); // Kolom A (Akun)
+              return allowedAccounts.includes(akunChat);
+          });
+      }
     }
 
     // Sortir baris hasil filter berdasarkan kolom P atau Q
@@ -1404,19 +1445,16 @@ function getSheetData(sheetUrl, userAccountsStr) {
     // 2. SUNTIKKAN DATA VIRTUAL KE DALAM DATA UI
     // =========================================================
     limitedRows = limitedRows.map(function(r) {
-      var fullId = String(r[1] || "").trim(); // Kolom B Networking
-      var parts = fullId.split('.');
-      var devName = parts.length > 1 ? parts.slice(1).join('.') : "Default"; // Ekstrak Nama Device
+      // Langsung tembak Kolom E (Indeks 4) dari sheet Networking untuk mendapatkan Nomor Device
+      var devNumNet = String(r[4] || "").replace(/\D/g, ''); 
       
-      // Ambil konfigurasi (Rasio, Key, URL) dari memori virtual Setting
-      var config = deviceConfig[devName] || { rasio: 0, apiKey: "", apiUrl: "" };
+      // Pencocokan otomatis menggunakan Nomor Device (sangat cepat & anti error split)
+      var config = deviceConfig[devNumNet] || { rasio: 0, apiKey: "", apiUrl: "" };
       
-     // MEMASTIKAN ARRAY CUKUP PANJANG (Penting!)
-      // Perpanjang array menjadi 33 agar memiliki ruang aman di belakang
+      // MEMASTIKAN ARRAY CUKUP PANJANG (Penting!)
       while (r.length <= 33) { r.push(""); }
       
       // SUNTIKKAN VIRTUAL VLOOKUP UNTUK DIKIRIM KE UI
-      // Pindahkan dari index 8 & 9 (yang menabrak Biodata) ke index yang aman
       r[31] = config.apiKey; // Suntik API Key ke Index 31
       r[32] = config.apiUrl; // Suntik API URL ke Index 32
       r[33] = config.rasio;  // Suntik Rasio ke Index 33
@@ -1633,8 +1671,8 @@ function verifyLogin(sheetUrl, user, pass) {
     var sheet = ss.getSheetByName("Setting");
     if (!sheet) return { success: false, msg: "Sheet Setting tidak ditemukan." };
     
+    // 1. Cek Login Admin / Master Admin (A27:C30)
     var adminData = sheet.getRange("A27:C30").getValues();
-    
     for (var i = 0; i < adminData.length; i++) {
       var dbUser = String(adminData[i][0]).trim();
       var dbPass = String(adminData[i][1]).trim();
@@ -1643,9 +1681,27 @@ function verifyLogin(sheetUrl, user, pass) {
       if (dbUser !== "" && dbUser === user && dbPass === pass) {
         var roles = dbRoleStr.split(",").map(function(s) { return s.trim(); });
         var isMaster = roles.includes("Master Admin");
-        return { success: true, isMaster: isMaster, roles: roles };
+        // Kembalikan flag isCS: false untuk Admin
+        return { success: true, isMaster: isMaster, isCS: false, roles: roles };
       }
     }
+    
+    // 2. Cek Login Khusus CS via Data Device (G34:H)
+    var lastRow = sheet.getLastRow();
+    if (lastRow >= 34) {
+      // getRange(baris_mulai, kolom_G(7), jumlah_baris, 2_kolom)
+      var deviceData = sheet.getRange(34, 7, lastRow - 33, 2).getValues(); 
+      for (var j = 0; j < deviceData.length; j++) {
+        var devUser = String(deviceData[j][0]).trim(); // Kolom G (No Server / Username)
+        var devPass = String(deviceData[j][1]).trim(); // Kolom H (BSUID / Password)
+        
+        if (devUser !== "" && devUser === user && devPass === pass) {
+          // Sukses Login sebagai CS. Role ditandai "CS:" agar fungsi filter tau ini tipe CS
+          return { success: true, isMaster: false, isCS: true, roles: ["CS:" + devUser] };
+        }
+      }
+    }
+    
     return { success: false, msg: "Username atau Password salah." };
   } catch (e) {
     return { success: false, msg: "Error Server: " + e.message };
@@ -1774,5 +1830,71 @@ function dailyCRMSync(clientSheetId) {
     Logger.log("❌ Error CRM Sync: " + e.message);
   } finally {
     lock.releaseLock();
+  }
+}
+
+// =========================================================================
+// [MODUL FINANCE BACKEND - OPTIMIZED & SELF-HEALING]
+// =========================================================================
+function getFinanceDataMaster(sheetUrl) {
+  try {
+    const ss = SpreadsheetApp.openByUrl(sheetUrl);
+    
+    // Deteksi tab sheet "Finance" secara fleksibel (aman dari spasi/huruf besar-kecil)
+    let sheet = null;
+    const sheets = ss.getSheets();
+    for (let s of sheets) {
+      if (s.getName().trim().toLowerCase() === "finance") {
+        sheet = s;
+        break;
+      }
+    }
+    
+    // Self-Healing: Jika sheet Finance belum ada, buatkan secara otomatis beserta headernya
+    if (!sheet) {
+      sheet = ss.insertSheet("Finance");
+      sheet.appendRow([
+        "Timestaps", "Akun", "Agen", "ID Networking", "Nama Konsumen", 
+        "Status", "Jenis", "Kategori", "Tgl Transaksi", "Nama Item", 
+        "Qty", "Satuan", "Harga Satuan", "Total", "Note", 
+        "Id Group", "Nama Group", "No Inv", "Link Drive", "Nama File", "Proses AI", "Bulan"
+      ]);
+    }
+    
+    // Batch processing: Tarik seluruh data sekaligus menggunakan getValues()
+    const data = sheet.getDataRange().getValues();
+    if (data.length <= 1) return []; // Hanya ada header
+    
+    let result = [];
+    // Batasi maksimal 500 transaksi terakhir agar browser klien tidak lag/timeout
+    const startRow = Math.max(1, data.length - 500); 
+    
+    for (let i = data.length - 1; i >= startRow; i--) {
+      let row = data[i];
+      // Menyisipkan nomor baris fisik asli Spreadsheet (baris 1 = index 0 + 2) untuk operasi update cepat
+      row.rowIndex = i + 1; 
+      result.push(row);
+    }
+    return result;
+  } catch(e) {
+    Logger.log("Error getFinanceDataMaster: " + e.message);
+    return [];
+  }
+}
+
+function updateFinanceRowStatus(sheetUrl, rowIndex, newStatus) {
+  try {
+    const ss = SpreadsheetApp.openByUrl(sheetUrl);
+    let sheet = null;
+    ss.getSheets().forEach(s => {
+      if (s.getName().trim().toLowerCase() === "finance") sheet = s;
+    });
+    if (!sheet) throw new Error("Sheet Finance tidak ditemukan.");
+    
+    // Kolom F (Status) berada pada indeks kolom ke-6
+    sheet.getRange(parseInt(rowIndex), 6).setValue(newStatus);
+    return "Status berhasil diperbarui!";
+  } catch(e) {
+    throw new Error(e.message);
   }
 }

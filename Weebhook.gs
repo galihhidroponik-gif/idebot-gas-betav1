@@ -33,11 +33,11 @@ function doPostLibrary(e, clientSheetId) {
     // =================================================================================
     // 2. PRE-FILTER & CUSTOM AUTOREPLY JID GRUP (DENGAN SHEET LOG)
     // =================================================================================
-    // Toleransi deteksi grup diperluas agar mendeteksi Onesender (isGroup / chat berakhiran @g.us)
-    let isGroup = data.is_group === true || data.isGroup === true || String(data.chat_type).toLowerCase() === "group" || String(data.chat || "").includes("@g.us") || String(data.from || "").includes("@g.us");
+    // Toleransi deteksi grup diperluas agar mendeteksi Onesender & Fonnte (isgroup)
+    let isGroup = data.is_group === true || data.isGroup === true || data.isgroup === true || String(data.chat_type).toLowerCase() === "group" || String(data.chat || "").includes("@g.us") || String(data.from || "").includes("@g.us");
     
-    // Toleransi pembacaan teks pesan (Onesender terkadang menggunakan data.text)
-    let pesanTeks = String(data.message || data.message_text || data.text || "").trim().toLowerCase();
+    // Toleransi pembacaan teks pesan (Fonnte menggunakan data.pesan)
+    let pesanTeks = String(data.pesan || data.message || data.message_text || data.text || "").trim().toLowerCase();
     
     // Kunci Command: Hanya sah jika pesannya persis "/group_id"
     let isGroupIdCommand = (pesanTeks === "/group_id");
@@ -107,14 +107,28 @@ function doPostLibrary(e, clientSheetId) {
     let isNewsletter = String(data.sender_lid || data.sender || "").includes("@newsletter");
     let isSticker = data.message_type === "sticker" || (data.message && data.message.message_type === "sticker");
     let isBroadcast = String(data.chat || data.to_id || data.from_id || "").includes("@broadcast");
-    let isDuplicatePayload = (data.apiUrl === undefined && data.message_id === undefined);
+    
+    // [OPTIMASI]: Perluas deteksi payload kosong agar mengenali 'inboxid' atau 'id' milik Fonnte
+    let isDuplicatePayload = (data.apiUrl === undefined && data.message_id === undefined && data.inboxid === undefined && data.id === undefined);
 
     // 2. MODIFIKASI FILTER: Bypass pesan dari grup HANYA JIKA perintah valid
     let isFinanceCommand = pesanTeks.startsWith("/finance");
+
+    // 1. Filter Trivial: Pesan sampah yang wajar terjadi sehari-hari. Langsung buang, JANGAN buang kuota untuk LOG.
+    let isTrivialIgnore = (isGroup && !isGroupIdCommand && !isFinanceCommand) || isNewsletter || isSticker || isBroadcast;
+
+    // 2. Filter Anomali: Error teknis dari webhook (duplikat/kosong). Perlu di-log untuk investigasi.
+    let isAnomalyIgnore = isDuplicatePayload; 
+
+    if (isTrivialIgnore || isAnomalyIgnore) {
     
-    // Perbaikan: Tolak pesan grup jika bukan isGroupIdCommand (Admin) dan bukan isFinanceCommand
-    if ((isGroup && !isGroupIdCommand && !isFinanceCommand) || isNewsletter || isSticker || isBroadcast || isDuplicatePayload) {
-        return ContentService.createTextOutput("IGNORED");
+    // Hanya lakukan operasi WRITE ke Sheet LOG jika itu anomali (menghemat 90% kuota log)
+    if (isAnomalyIgnore && (data.device !== undefined || data.senderlid !== undefined || data.sender !== undefined)) {
+        logWebhookError("[JSON BLOCKED] Alasan: PAYLOAD_KOSONG_ATAU_DUPLIKAT", e.postData.contents, clientSheetId);
+    }
+    
+    // Langsung tutup koneksi HTTP ke server WhatsApp (Fonnte/WA BA)
+    return ContentService.createTextOutput("IGNORED");
     }
 
     // 3. Kunci eksekusi
@@ -292,12 +306,41 @@ function processWebhook(data, clientSheetId, urlDevice = null) {
   try {
     let mappedData = {}, bsuid = "";
 
-    // Deteksi grup universal (Disamakan ketahanannya dengan Bagian 1)
-    let isPesanGrup = data.is_group === true || data.isGroup === true || String(data.chat_type).toLowerCase() === "group" || String(data.chat || "").includes("@g.us") || String(data.to_id || "").includes("@g.us") || String(data.from || "").includes("@g.us");
+    // Deteksi grup universal (Tambahkan data.isgroup untuk Fonnte)
+    let isPesanGrup = data.is_group === true || data.isGroup === true || data.isgroup === true || String(data.chat_type).toLowerCase() === "group" || String(data.chat || "").includes("@g.us") || String(data.to_id || "").includes("@g.us") || String(data.from || "").includes("@g.us");
 
-    // 1. PARSING DATA (Dukung format V1 & V2 termasuk Starsender)
-    if (data.version || data.message_timestamp) {
-      // JIKA urlDevice ADA, UTAMAKAN ITU. JIKA TIDAK, PAKAI DATA DARI JSON.
+    // 1. PARSING DATA (Dukung Fonnte, Starsender, dan Onesender)
+    let currentTimeISO = new Date().toISOString(); 
+    
+    if (data.device !== undefined && data.inboxid !== undefined) {
+      // A. KONDISI FONNTE (Memiliki key 'device' dan 'inboxid')
+      let myNumNorm = urlDevice ? normalizePhone(urlDevice) : normalizePhone(data.device);
+      bsuid = String(data.senderlid || data.memberlid || "");
+      let lampiranUrl = data.url || "";
+      let isMeFonnte = data.quick ? true : false;
+      
+      // [PERBAIKAN BUG]: Jika pesan keluar dari Admin (quick=true), paksa 'from' menjadi nomor Device
+      let pengirimAsli = (isPesanGrup && data.member) ? data.member : (isMeFonnte ? myNumNorm : data.sender);
+      
+      mappedData = {
+        nomor_device: myNumNorm, 
+        from: normalizePhone(pengirimAsli),
+        is_group: isPesanGrup, 
+        is_me: isMeFonnte,
+        message: data.pesan || data.message || "", 
+        message_id: data.inboxid || "",
+        push_name: !isMeFonnte ? String(normalizePushName(data.name) || ""): "",
+        received_at: formatTime(currentTimeISO), 
+        tglformat: getOnlyDate(currentTimeISO),
+        to: normalizePhone(isMeFonnte ? data.sender : ""), // Nomor tujuan Customer
+        file_url: lampiranUrl,
+        message_type: data.type || (lampiranUrl ? "media" : "text"),
+        is_fonnte: true // [PERBAIKAN BUG]: Flag khusus untuk memutus halusinasi Fonnte di bawah
+      };
+    }
+    else if (data.version || data.message_timestamp) {
+      // B. Onesenser : kondisi jika json memiliki data kolom bernama 'version'
+      // JIKA urlDevice ADA (tambahkan setelah exec '?device=6281234567890'), UTAMAKAN ITU.
       let myNumNorm = urlDevice ? normalizePhone(urlDevice) : normalizePhone(data.is_from_me ? data.sender_phone : data.to_id);
       
       bsuid = String(data.sender_lid || "");
@@ -314,7 +357,8 @@ function processWebhook(data, clientSheetId, urlDevice = null) {
         message_type: data.message_type || (lampiranUrl ? "media" : "text")
       };
     } else {
-      // LAKUKAN HAL YANG SAMA UNTUK FORMAT LAMA
+      // C. starsender tidak memiliki kolom 'version'
+      // JIKA urlDevice ADA (tambahkan setelah exec '?device=6281234567890'), UTAMAKAN ITU.
       let myNumNorm = urlDevice ? normalizePhone(urlDevice) : normalizePhone(data.is_me ? data.from : data.to);
       
       bsuid = String(data.sender || ""); 
@@ -341,7 +385,7 @@ function processWebhook(data, clientSheetId, urlDevice = null) {
 
     // KEMBALIKAN @g.us YANG TERPOTONG KHUSUS UNTUK /group_id DAN /finance
     if (mappedData.is_group && (isiPesanFilter === "/group_id" || isFinanceProcess)) {
-        let fullGroupId = data.group_jid || data.chat || data.group_id || (mappedData.is_me ? data.to : data.from);
+        let fullGroupId = data.group_jid || data.senderlid || data.chat || data.group_id || (mappedData.is_me ? data.to : data.from);
         if (fullGroupId && !String(fullGroupId).includes("@g.us")) {
             fullGroupId = String(fullGroupId) + "@g.us";
         }
@@ -361,10 +405,17 @@ function processWebhook(data, clientSheetId, urlDevice = null) {
       return ContentService.createTextOutput("IGNORED");
     }
 
+    // =========================================================================
+// BLOK KODE BARU 1: MODIFIKASI DALAM FUNGSI processWebhook()
+// =========================================================================
     // 2. INIT & SETTINGS
-    const isBsuidLookup = (bsuid.toLowerCase().includes("@lid") && mappedData.is_me);
-    // Masukkan clientSheetId ke fungsi pengambil data
-    const config = getInitializationData(isBsuidLookup ? bsuid : mappedData.nomor_device, isBsuidLookup, clientSheetId);
+    const isBsuidLookup = (bsuid.toLowerCase().includes("@lid") && mappedData.is_me && !mappedData.is_fonnte);
+    
+    // Ambil Push Name dari berbagai variasi payload sebagai modal nama Device otomatis
+    let fallbackPushName = data.push_name || data.pushName || data.name || mappedData.push_name || "";
+    
+    // Masukkan clientSheetId & fallbackPushName ke fungsi pengambil data
+    const config = getInitializationData(isBsuidLookup ? bsuid : mappedData.nomor_device, isBsuidLookup, clientSheetId, fallbackPushName, bsuid);
     
     const ss = SpreadsheetApp.openById(config.targetSpreadsheetId);
     const targetSheet = ss.getSheetByName("Networking");
@@ -378,7 +429,7 @@ function processWebhook(data, clientSheetId, urlDevice = null) {
     let rowIndex = -1;
     const nomorWA = mappedData.is_me ? mappedData.to : mappedData.from;
     const hasWA = nomorWA && !String(nomorWA).includes("@lid") && String(nomorWA).trim() !== "";
-    const uniqueIdB = hasWA ? nomorWA + "." + finalColD : null;
+    const uniqueIdB = hasWA ? nomorWA + ".@admin" + finalColE : null;
 
     if (hasWA && uniqueIdB) {
       for (let i = 0; i < allDataBtoG.length; i++) {
@@ -470,7 +521,7 @@ function processWebhook(data, clientSheetId, urlDevice = null) {
         let hasGroupLabel = arrayLabelGroup.some(label => label.toUpperCase() === "GROUP");
         
         if (!hasGroupLabel) {
-            arrayLabelGroup.push("GROUP");
+            arrayLabelGroup.push("GROUP, UNSUBAI");
         }
         
         // Gabungkan kembali menjadi string dengan koma
@@ -513,11 +564,37 @@ function processWebhook(data, clientSheetId, urlDevice = null) {
                     // Auto-Kapitalisasi (Title Case) -> 'pak galih' jadi 'Pak Galih'
                     let cleanName = pureName.toLowerCase().split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
                     
+                    // blok kode baru
                     finalH = cleanName; // Timpa Kolom Nama (H) dengan nama yang sudah diekstrak murni
                 }
             }
         }
     }
+
+    // ====================================================================
+    // BLOK KODE BARU: AUTO-LABEL "ABC" UNTUK CUSTOMER
+    // ====================================================================
+    // Syarat: Pesan datang dari customer (!mappedData.is_me)
+    if (!mappedData.is_me) {
+        // Buat array uppercase khusus untuk pengecekan agar Case Insensitive
+        let arrayLabelAktif = finalC ? finalC.split(",").map(s => s.trim().toUpperCase()) : [];
+        
+        // Cek keberadaan label prioritas
+        let hasPriorityLabel = arrayLabelAktif.includes("ABC") || 
+                               arrayLabelAktif.includes("GROUP") || 
+                               arrayLabelAktif.includes("AGEN") || 
+                               arrayLabelAktif.includes("AE") || 
+                               arrayLabelAktif.includes("AER");
+                               
+        // Jika tidak ada satupun label di atas, suntikkan "ABC"
+        if (!hasPriorityLabel) {
+            // Gunakan array dengan case asli untuk mempertahankan penulisan label lainnya
+            let arrayReal = finalC ? finalC.split(",").map(s => s.trim()).filter(Boolean) : [];
+            arrayReal.push("ABC");
+            finalC = arrayReal.join(", ");
+        }
+    }
+    // ====================================================================
 
     let qtyInbox = mappedData.is_me ? 0 : 1;
     let qtyOutbox = mappedData.is_me ? 1 : 0;
@@ -534,14 +611,19 @@ function processWebhook(data, clientSheetId, urlDevice = null) {
         let earlyWaktuMasuk = mappedData.is_me ? "" : mappedData.received_at;
         let earlyWaktuKeluar = mappedData.is_me ? mappedData.received_at : "";
         let earlyBsuid = mappedData.is_me ? "" : bsuid;
-        
+        let earlyWaktuDaftar = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
+
         // Susun struktur "Baris Draft" 26 Kolom
         let earlyRowData = [
             namaAkun, uniqueIdB, finalC, finalColD, finalColE, (mappedData.is_me ? mappedData.to : mappedData.from), earlyBsuid, finalH, finalI, 
-            "", "", "", mappedData.tglformat, mappedData.is_me, mappedData.message_id, 
+            "",                   // Kolom J: Dibiarkan kosong agar bisa diisi manual tanpa ditimpa sistem
+            earlyWaktuDaftar,     // Kolom K: Timestamp permanen waktu pertama kali customer tercatat
+            JSON.stringify(data), // Kolom L: rawJson dipindahkan ke sini
+            mappedData.tglformat, mappedData.is_me, mappedData.message_id, 
             earlyWaktuMasuk, earlyWaktuKeluar, qtyInbox, qtyOutbox, 
-            "", // History dikosongkan dulu
-            JSON.stringify(data), "Queue", "", "", "", true, ""
+            "",                   // Kolom T: History dikosongkan dulu
+            "",                   // Kolom U: Limit History (Dikosongkan untuk diisi manual)
+            "Queue", "", "", "", true, ""
         ];
         
         // Langsung catat ke database dan kunci paksa dengan flush
@@ -651,7 +733,14 @@ if (mappedData.file_url) {
     }
     
     let historyGabungan = historyLama ? historyLama + (oldData && String(oldData.aiLabel).toUpperCase() === "QUEUE" && !mappedData.is_me ? "" : "\n") + newHistoryEntry : newHistoryEntry;
-    let historyUpdatefix = limitHistory(historyGabungan, parseInt(config.limitHistoryValue) || 10);
+    
+    // --- EVALUASI PRIORITAS LIMIT ---
+    // 1. Ekstrak nilai Kolom U jika ada dan berupa angka valid
+    let limitPersonal = (oldData && oldData.limitHistoryPersonal) ? parseInt(oldData.limitHistoryPersonal) : NaN;
+    // 2. Jika valid dan lebih dari 0, pakai limitPersonal. Jika tidak, fallback ke config default (E20)
+    let limitFinal = (!isNaN(limitPersonal) && limitPersonal > 0) ? limitPersonal : (parseInt(config.limitHistoryValue) || 10);
+    
+    let historyUpdatefix = limitHistory(historyGabungan, limitFinal);
 
     // 6. AI LOGIC & URUTAN PENENTUAN STATUS (KOLOM V)
     let finalAiLabel = "Queue", finalAiPrompt = "", finalAiLog = "";
@@ -676,7 +765,7 @@ if (mappedData.file_url) {
 // ====================================================================
 // 1. Tangkap teks secara agresif (mendukung caption gambar dan teks biasa)
 let textForFinance = "";
-if (data) textForFinance = data.message_text || data.caption || data.text || data.message || "";
+if (data) textForFinance = data.pesan || data.message_text || data.caption || data.text || data.message || "";
 if (!textForFinance) textForFinance = mappedData.message || "";
 textForFinance = String(textForFinance).trim();
 
@@ -760,11 +849,21 @@ textForFinance = String(textForFinance).trim();
             if (isFinanceAI) {
                 promptVision = "### [TUGAS KHUSUS: FINANCE AI HYBRID MULTI-ITEM]\n"+
                 "Ekstrak bukti transaksi/struk belanja. Pisahkan nilai menggunakan Double Titik Koma (;;) persis seperti pola berikut:\n"+
-                "Status|Jenis;;Kategori;;Tgl Transaksi;;Nama Item (Garis Besar);;Total Qty;;Satuan;;Harga Satuan;;Total;;NomorStrukatauReferensi\n"+
+                "Pending|Jenis;;Kategori;;Tgl Transaksi;;Nama Item (Garis Besar);;Qty;;Satuan;;Harga Satuan;;Total;;NomorStrukatauReferensi\n\n"+
+                "Keterangan Aturan Isi :\n"+
+                "- Status = Wajib isi Pending|\n"+
+                "- Jenis = Transfer / Cash / Bukan Bukti Transfer.\n"+
+                "- Kategori = isi kategori transaksi.\n"+
+                "- Tgl Transaksi = Ambil dari struk. Jika tidak ada, pakai tanggal hari ini dengan format 22/08/2026 3:56:19\n"+
+                "- Nama Item = Nama atau peruntukan isi transaksi/kwitansi secara garis besar\n"+
+                "Kolom 'Qty' diisi kuantitas jenis item misal ada ada list besi beton ulir dan besi beton polos maka Qty isi 2\n"+
+                "- Satuan = jika hanya item tunggal bisa gunakan pcs, paket, kotak, dll namun jika multi item gunakan aturan\n"+
                 "ATURAN KHUSUS MULTI-ITEM: Rincikan tiap barang dari struk ke dalam kolom 'Satuan' WAJIB menggunakan format {Nama Barang, Qty, Harga Satuan, Subtotal}. " +
                 "Contoh struk dengan 2 barang: {Besi Beton Ulir 13, 30, 142000, 4260000}{Besi Beton Polos 8, 30, 54000, 1620000}. " +
-                "PENTING: Jangan gunakan spasi atau koma di antara kurung kurawal penutup dan pembuka }{. Hilangkan tanda titik/koma pada nilai angka harga. " +
-                "Kolom 'Total Qty' diisi kuantitas jenis item misal ada ada list besi beton ulir dan besi beton polos maka Qty isi 2, Kolom Harga satuan diisi dengan Rata-rata=Total/Qty, dan Kolom 'Total' diisi grand total tagihan.\n\n"+ rawVision;
+                "PENTING: Jangan gunakan spasi atau koma di antara kurung kurawal penutup dan pembuka }{. Hilangkan tanda titik/koma pada nilai angka harga. Pajak dimasukan dianggap sebagai item yang berdiri sendiri dengan nama pajak PB1 ppn11% misalnya, dan admin bank juga berdiri sendiri" +
+                "- Harga Satuan = untuk multi item bisa dikasih rata rata dari harga satuan per item.\n"+
+                "- Total = Harga penjumlahan dari semua item dalam struk kwitansi /n"+
+                "- NomorStrukatauReferensi = Ekstrak kode unik referensi (Misal: No. Ref BRI/Mandiri, No Transaksi BSI, ID Transaksi DANA, No Urut BCA). Jika tidak ada, biarkan KOSONG (jangan tulis strip/tanda baca/kata).\n\n";
             } else {
                 promptVision = "### [TUGAS KHUSUS ANALISIS GAMBAR]\n"+
                 "Ekstrak data bukti mutasi/transfer/gambar dengan format presisi. Pisahkan setiap nilai menggunakan Double Titik Koma (;;) persis seperti pola berikut:\n"+
@@ -859,7 +958,7 @@ textForFinance = String(textForFinance).trim();
                 finalAiLabel = (aiLabel.toUpperCase() === "QUEUE") ? "Queue" : "Stop"; 
                 historyUpdatefix += "\n[User Kirim Gambar : " + deskripsiGambar + "]";
 
-                let extractedCaption = data.message_text || data.caption || data.text || data.message || "";
+                let extractedCaption = data.pesan || data.message_text || data.caption || data.text || data.message || "";
                 logImageActivity(uniqueIdB, imagePipelineLogs.join("\n"), driveLink, aiExtractedData, finalColD, namaAkun, finalH, clientSheetId, mappedData, namaFile, extractedCaption);
             }
 
@@ -1159,8 +1258,10 @@ textForFinance = String(textForFinance).trim();
 
     /* ======================================================= */
     /* PENGAMAN BSUID: Jangan hapus jika data barunya kosong   */
+    /* KHUSUS FONNTE: Selalu simpan BSUID dari payload admin   */
     /* ======================================================= */
-    let bsuidBaru = mappedData.is_me ? "" : bsuid;
+    // Logika: Jika dari Fonnte, ambil bsuid. Jika bukan, jalankan logika is_me standar.
+    let bsuidBaru = mappedData.is_fonnte ? bsuid : (mappedData.is_me ? "" : bsuid);
     let finalBsuid = bsuidBaru;
     
     // Jika BSUID baru kosong, cek apakah sebelumnya sudah ada BSUID di database (oldData)
@@ -1168,18 +1269,22 @@ textForFinance = String(textForFinance).trim();
         finalBsuid = oldData.bsuid; 
     }
 
+    // Tarik data lama untuk mengamankan Kolom J dan Kolom K agar tidak tertimpa
+    let oldJ = oldData ? (oldData.colJ || "") : "";
+    let oldK = oldData ? (oldData.colK || "") : "";
+
     let rowDataUpdate = [
         uniqueIdB, 
         finalC, 
         finalColD, 
         finalColE, 
         (mappedData.is_me ? mappedData.to : mappedData.from), 
-        finalBsuid,             // <--- Gunakan variabel finalBsuid yang sudah diamankan (KOLOM G)
+        finalBsuid,             
         finalH, 
         finalI, 
-        "", 
-        "", 
-        "", 
+        oldJ,                  // Kolom J: Tulis ulang data lama
+        oldK,                  // Kolom K: Tulis ulang timestamp asli
+        JSON.stringify(data),  // Kolom L: Update rawJson di sini secara batch
         mappedData.tglformat, 
         mappedData.is_me, 
         mappedData.message_id, 
@@ -1209,15 +1314,15 @@ textForFinance = String(textForFinance).trim();
         /* Eksekusi update baris (Data sudah ada) */
         /* TAMBAHAN: Pastikan Kolom A (indeks 1) juga selalu ter-update dengan Akun */
         targetSheet.getRange(rowIndex, 1).setValue(namaAkun);
-        
-        /* 1. Update Kolom B sampai T (rowDataUpdate) */
+
+        /* 1. Update Kolom B sampai T (rowDataUpdate) -> Sekarang sampai Kolom T (karena array berisi 19 item dan menulis 19 kolom) */
         targetSheet.getRange(rowIndex, 2, 1, rowDataUpdate.length).setValues([rowDataUpdate]);
         
-        /* ======================================================= */
-        /* TAMBAHAN: Update Kolom U (21) dengan JSON Data Terbaru  */
-        /* ======================================================= */
-        targetSheet.getRange(rowIndex, 21).setValue(JSON.stringify(data));
-        
+        /* ============================================================================== */
+        /* PERINTAH setValue() KE KOLOM U (21) TELAH DIHAPUS.                             */
+        /* Hal ini agar Kolom U (Limit History group) yang diisi manual tidak terhapus.   */
+        /* ============================================================================== */
+
         /* 2. Update Kolom V (22) - finalAiLabel */
         targetSheet.getRange(rowIndex, 22).setValue(finalAiLabel);
 
@@ -1242,32 +1347,46 @@ textForFinance = String(textForFinance).trim();
 // =========================================================================
 // BAGIAN 4: FUNGSI PEMBANTU (HELPERS)
 // =========================================================================
-function getInitializationData(searchKey, isBsuidSearch = false, clientSheetId) { // <-- Tambah Parameter
-  // HAPUS getActiveSpreadsheet, langsung pakai clientSheetId
+// =========================================================================
+// BLOK KODE BARU 2: REPLACE FULL FUNGSI getInitializationData()
+// =========================================================================
+function getInitializationData(searchKey, isBsuidSearch = false, clientSheetId, pushNameFallback = "", extractedBsuid = "") {
   const result = {
     targetSpreadsheetId: "", folderId: "", geminiApiKey: "", geminiModel: "", 
     tempGemini: "", fallbackModels: "", labelwa: "", limitHistoryValue: 10, limitWarmerValue: 0,
     device: { deviceName: searchKey, deviceNum: "", waKey: "", waUrl: "", prefixUrl: "", aiStatus: "OFF", autoLabel: "" }
   };
   try {
-    const sheet = SpreadsheetApp.openById(clientSheetId).getSheetByName("Setting"); // <-- Target Spesifik
+    const sheet = SpreadsheetApp.openById(clientSheetId).getSheetByName("Setting");
     const settingMatrix = sheet.getRange("A1:M30").getValues();
     result.targetSpreadsheetId = String(settingMatrix[1][1]).trim(); 
-    result.folderId            = String(settingMatrix[1][2]).trim(); // BACA C2 DISINI
+    result.folderId            = String(settingMatrix[1][2]).trim(); 
     result.labelwa             = settingMatrix[12][5]; 
     result.tempGemini          = settingMatrix[15][5];  
     result.geminiApiKey        = settingMatrix[17][5]; 
     result.geminiModel         = settingMatrix[17][6]; 
     result.fallbackModels      = settingMatrix[17][7]; 
     result.limitHistoryValue   = settingMatrix[19][4]; 
-    result.limitWarmerValue = parseInt(settingMatrix[19][6]) || 0;
+    result.limitWarmerValue    = parseInt(settingMatrix[19][6]) || 0;
 
     const lastRow = sheet.getLastRow();
+    let deviceFound = false;
+    let firstEmptyRow = 34; // Titik mulai pencarian baris kosong
+
+    // Di dalam file Weebhook.gs -> function getInitializationData()
     if (lastRow >= 34) {
       const data = sheet.getRange("A34:R" + lastRow).getValues();
-      const cleanSearch = String(searchKey).replace(/\D/g, "");
+      
+      // [OPTIMASI]: Gunakan normalizePhone bawaan untuk menstandarkan input 
+      // SEBELUM pencarian dimulai agar 0853 dan 62853 dianggap sama.
+      const cleanSearch = isBsuidSearch ? searchKey : normalizePhone(searchKey);
+      
       for (let i = 0; i < data.length; i++) {
-        let isMatch = isBsuidSearch ? String(data[i][7]).trim() === searchKey : String(data[i][6]).replace(/\D/g, "") === cleanSearch;
+        // [OPTIMASI]: Standarkan juga data dari Sheet saat dicocokkan
+        let isMatch = isBsuidSearch ? 
+            String(data[i][7]).trim() === searchKey : 
+            normalizePhone(data[i][6]) === cleanSearch;
+        
         if (isMatch) {
           result.device = {
             deviceName: data[i][0], 
@@ -1277,26 +1396,94 @@ function getInitializationData(searchKey, isBsuidSearch = false, clientSheetId) 
             waUrl: data[i][9], 
             prefixUrl: data[i][10], 
             aiStatus: String(data[i][11]).toUpperCase(), 
-            promptrawVision: data[i][13], //config.device.promptrawVision
+            promptrawVision: data[i][13], 
             autoLabel: data[i][4]
           };
+          deviceFound = true;
           break; 
         }
       }
+
+      // Deteksi baris yang benar-benar kosong untuk diisi
+      if (!deviceFound) {
+        for (let i = 0; i < data.length; i++) {
+          let checkColA = String(data[i][0]).trim();
+          let checkColG = String(data[i][6]).trim();
+          if (checkColA === "" && checkColG === "") {
+            firstEmptyRow = 34 + i;
+            break;
+          }
+          firstEmptyRow = 34 + i + 1; // Jika semua baris penuh, ambil baris paling bawah
+        }
+      }
     }
+
+    // ====================================================================
+    // FITUR AUTO INPUT DEVICE BARU
+    // ====================================================================
+    // Hanya memicu pembuatan jika pencarian menggunakan Nomor WA (bukan BSUID)
+    if (!deviceFound && !isBsuidSearch) {
+      let cleanDeviceNum = String(searchKey).replace(/\D/g, "");
+
+      // --- BLOK KODE BARU: FILTER NORMALISASI 628 ---
+      // Memaksa standarisasi format internasional sebelum masuk ke Database (Mencegah bug awalan 08)
+      if (cleanDeviceNum.startsWith("0")) {
+          cleanDeviceNum = "62" + cleanDeviceNum.substring(1);
+      } else if (cleanDeviceNum.startsWith("8")) {
+          cleanDeviceNum = "62" + cleanDeviceNum;
+      }
+      // ----------------------------------------------
+
+      // Syarat minimal karakter nomor WA untuk mencegah input nyasar
+      if (cleanDeviceNum.length >= 5) {
+        let newDeviceName = pushNameFallback ? pushNameFallback : ("Device " + cleanDeviceNum);
+
+        // Targeted Write: Tulis HANYA pada sel yang dituju agar Formula di Kolom D dan F aman
+        sheet.getRange(firstEmptyRow, 1).setValue(newDeviceName);  // Kolom A = Push Name
+        sheet.getRange(firstEmptyRow, 2).setValue("New Akun");     // Kolom B = "New Akun"
+        sheet.getRange(firstEmptyRow, 3).setValue("OFF");          // Kolom C = "OFF"
+        sheet.getRange(firstEmptyRow, 5).setValue("NEW");          // Kolom E = "New"
+        sheet.getRange(firstEmptyRow, 7).setValue(cleanDeviceNum); // Kolom G = Nomor WA Device
+        
+        // Perbaikan: Gunakan parameter extractedBsuid dari parameter fungsi
+        sheet.getRange(firstEmptyRow, 8).setValue(extractedBsuid || "bsuidunknown"); // Kolom H = BSUID
+        
+        sheet.getRange(firstEmptyRow, 12).setValue("OFF");         // Kolom L
+
+        // Inject ke memory eksekusi saat ini agar pipeline tidak crash dan berlanjut normal
+        result.device = {
+          deviceName: newDeviceName, 
+          akun: "New Akun",
+          deviceNum: cleanDeviceNum, 
+          waKey: "", 
+          waUrl: "", 
+          prefixUrl: "", 
+          aiStatus: "OFF", 
+          autoLabel: "New"
+        };
+      }
+    }
+
   } catch (e) { throw e; }
   return result;
 }
 
+// blok kode baru
 function getCustomerDataRow(sheet, rowIndex) {
   if (rowIndex === -1) return null;
   const values = sheet.getRange(rowIndex, 1, 1, 28).getValues()[0];
   return {
     timestamp: values[0], uniqueId: values[1], labelwa: values[2], deviceName: values[3], 
     deviceNum: values[4], custNum: values[5], bsuid: values[6], pushName: values[7], 
-    biodata: values[8], existingM: values[12], isMe : values[13], msgId: values[14], 
+    biodata: values[8], 
+    colJ: values[9],  // Mengamankan data manual Kolom J
+    colK: values[10], // Mengamankan timestamp pembuatan Kolom K
+    rawJson: values[11],
+    existingM: values[12], isMe : values[13], msgId: values[14], 
     message: values[15], receivedAt: values[16], qtyInbox: values[17], qtyOutbox: values[18], 
-    historyChat: values[19], rawJson: values[20], aiLabel: values[21], aiPrompt: values[22], 
+    historyChat: values[19], 
+    limitHistoryPersonal: values[20], // <-- SUNTIKAN BARU: Membaca Kolom U
+    aiLabel: values[21], aiPrompt: values[22], 
     resumeAiX: values[23], aiLog: values[24], finalZ: values[25], jadwalKirim: values[26], serverKirim: values[27]
   };
 }
@@ -1598,4 +1785,70 @@ function processUIPostNative(data) {
   
   // 2. Ubah tipe datanya menjadi teks biasa agar bisa ditangkap oleh UI HTML
   return resultObject.getContent();
+}
+
+// =========================================================================
+// [MODUL FINANCE BACKEND - OPTIMIZED & SELF-HEALING]
+// =========================================================================
+function getFinanceDataMaster(sheetUrl) {
+  try {
+    const ss = SpreadsheetApp.openByUrl(sheetUrl);
+    
+    // Deteksi tab sheet "Finance" secara fleksibel (aman dari spasi/huruf besar-kecil)
+    let sheet = null;
+    const sheets = ss.getSheets();
+    for (let s of sheets) {
+      if (s.getName().trim().toLowerCase() === "finance") {
+        sheet = s;
+        break;
+      }
+    }
+    
+    // Self-Healing: Jika sheet Finance belum ada, buatkan secara otomatis beserta headernya
+    if (!sheet) {
+      sheet = ss.insertSheet("Finance");
+      sheet.appendRow([
+        "Timestaps", "Akun", "Agen", "ID Networking", "Nama Konsumen", 
+        "Status", "Jenis", "Kategori", "Tgl Transaksi", "Nama Item", 
+        "Qty", "Satuan", "Harga Satuan", "Total", "Note", 
+        "Id Group", "Nama Group", "No Inv", "Link Drive", "Nama File", "Proses AI", "Bulan"
+      ]);
+    }
+    
+    // Batch processing: Tarik seluruh data sekaligus menggunakan getValues()
+    const data = sheet.getDataRange().getValues();
+    if (data.length <= 1) return []; // Hanya ada header
+    
+    let result = [];
+    // Batasi maksimal 500 transaksi terakhir agar browser klien tidak lag/timeout
+    const startRow = Math.max(1, data.length - 500); 
+    
+    for (let i = data.length - 1; i >= startRow; i--) {
+      let row = data[i];
+      // Menyisipkan nomor baris fisik asli Spreadsheet (baris 1 = index 0 + 2) untuk operasi update cepat
+      row.rowIndex = i + 1; 
+      result.push(row);
+    }
+    return result;
+  } catch(e) {
+    Logger.log("Error getFinanceDataMaster: " + e.message);
+    return [];
+  }
+}
+
+function updateFinanceRowStatus(sheetUrl, rowIndex, newStatus) {
+  try {
+    const ss = SpreadsheetApp.openByUrl(sheetUrl);
+    let sheet = null;
+    ss.getSheets().forEach(s => {
+      if (s.getName().trim().toLowerCase() === "finance") sheet = s;
+    });
+    if (!sheet) throw new Error("Sheet Finance tidak ditemukan.");
+    
+    // Kolom F (Status) berada pada indeks kolom ke-6
+    sheet.getRange(parseInt(rowIndex), 6).setValue(newStatus);
+    return "Status berhasil diperbarui!";
+  } catch(e) {
+    throw new Error(e.message);
+  }
 }

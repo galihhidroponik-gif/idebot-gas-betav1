@@ -141,8 +141,8 @@
                     </button>
 
                     <!-- 1. Tombol Finance -->
-                    <button onclick="openFinanceModal()" class="hover:text-green-200 transition-colors" title="Finance Dashboard">
-                        <svg width="20" height="20" fill="currentColor" viewBox="0 0 16 16"><path d="M2 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H2zm4.5 13.5a.5.5 0 0 1-1 0v-4a.5.5 0 0 1 1 0v4zm3 0a.5.5 0 0 1-1 0v-6a.5.5 0 0 1 1 0v6zm3 0a.5.5 0 0 1-1 0v-8a.5.5 0 0 1 1 0v8z"/></svg>
+                    <button onclick="openFinancePanel()" class="hover:text-green-200 transition-colors" title="Finance Dashboard">
+                    <svg width="20" height="20" fill="currentColor" viewBox="0 0 16 16"><path d="M2 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H2zm4.5 13.5a.5.5 0 0 1-1 0v-4a.5.5 0 0 1 1 0v4zm3 0a.5.5 0 0 1-1 0v-6a.5.5 0 0 1 1 0v6zm3 0a.5.5 0 0 1-1 0v-8a.5.5 0 0 1 1 0v8z"/></svg>
                     </button>
                     
                     <!-- 2. Ikon Lonceng + Notifikasi -->
@@ -2818,232 +2818,554 @@ function openEditModal() {
     </div>
 </div>
 
+<!-- ========================================================================= -->
+<!-- BLOK KODE BARU: FINANCE MODAL DENGAN SCROLL-LOCK, FILTER TAMPILAN & PRINT ENGINE -->
+<!-- ========================================================================= -->
 <style>
     @media print {
+        /* Set Margin & Ukuran Kertas Otomatis */
+        @page { margin: 1cm; size: auto; }
+        
+        /* Matikan semua scroll dan batasan tinggi di body */
+        body, html { 
+            margin: 0 !important; padding: 0 !important; height: auto !important; 
+            overflow: visible !important; background-color: white !important;
+        }
         body * { visibility: hidden; }
+        
+        /* Tampilkan Modal Finance */
         #finance-modal, #finance-modal * { visibility: visible; }
-        #finance-modal { position: absolute; left: 0; top: 0; width: 100%; max-height: none; overflow: visible; background: white; }
-        .no-print { display: none !important; }
+        
+        /* PENGAMAN KRUSIAL: Elemen yang disembunyikan (hidden) tidak boleh dicetak ke PDF */
+        .hidden, .hidden * { display: none !important; visibility: hidden !important; }
+        .no-print, .no-print * { display: none !important; visibility: hidden !important; }
+        
+        /* 1. RESET PARENT CONTAINER: Matikan Absolute, Fixed, Flex, & Scroll */
+        #finance-modal { 
+            position: absolute !important; left: 0 !important; top: 0 !important; width: 100% !important; 
+            height: auto !important; max-height: none !important; overflow: visible !important; 
+            background: white !important; display: block !important; z-index: 99999;
+        }
+        #finance-content, #finance-main-ui {
+            height: auto !important; overflow: visible !important; display: block !important;
+            padding: 0 !important; margin: 0 !important;
+        }
+
+        /* 2. UBAH GRID MENJADI BLOCK MENCEGAH ELEMEN TERPOTONG TENGAH */
+        .grid { display: block !important; }
+        .grid > div { margin-bottom: 15px !important; page-break-inside: avoid !important; width: 100% !important; }
+
+        /* 3. OPTIMASI TABEL (AUTO PAGE BREAK) */
+        #finance-table-container, #finance-table-container > div.overflow-x-auto {
+            overflow: visible !important; height: auto !important; display: block !important;
+            border: none !important; box-shadow: none !important;
+        }
+        table { border-collapse: collapse !important; width: 100% !important; page-break-inside: auto !important; table-layout: auto !important; }
+        thead { display: table-header-group !important; } /* Mengulang Header di setiap lembar */
+        tfoot { display: table-footer-group !important; }
+        tr { page-break-inside: avoid !important; page-break-after: auto !important; }
+        th, td { border: 1px solid #000 !important; padding: 6px !important; font-size: 10px !important; color: #000 !important; white-space: normal !important; }
+        
+        /* Matikan teks meluber menyamping dari Tailwind */
+        .truncate, .whitespace-nowrap { white-space: normal !important; overflow: visible !important; text-overflow: clip !important; }
+        
+        /* 5. BLOK KODE BARU: AUTO-HIDE JUDUL LAPORAN FINANCE SAAT CETAK */
+        #finance-print-title { 
+            border: none !important; 
+            outline: none !important; 
+            background: transparent !important; 
+            box-shadow: none !important; 
+        }
+        /* Sembunyikan elemen jika teksnya kosong (hanya placeholder yang tampil) */
+        #finance-print-title:placeholder-shown { 
+            display: none !important; 
+            visibility: hidden !important; 
+        }
     }
+
+    /* BLOK KODE BARU: Fitur Resize Kolom Manual */
+        .resize-col {
+            resize: horizontal;
+            overflow: hidden;
+            position: relative;
+            min-width: 100px; /* Batas minimum agar tidak hilang saat dikecilkan */
+        }
+        /* Ikon titik 3 (grip) di ujung kolom agar user tahu bisa digeser */
+        .resize-col::after {
+            content: "⋮";
+            position: absolute;
+            right: 4px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #94a3b8;
+            font-size: 16px;
+            pointer-events: none;
+        }
+        @media print {
+            .resize-col { resize: none !important; overflow: visible !important; }
+            .resize-col::after { display: none !important; }
+        }
+
 </style>
 
-<div id="finance-modal" class="fixed inset-0 bg-gray-100 z-[500] hidden flex-col w-full h-full">
-    <div class="bg-[#008069] p-4 text-white flex justify-between items-center shadow-md no-print">
-        <h2 class="font-bold text-xl">📊 Finance Dashboard</h2>
-        <div class="flex gap-3">
-            <button onclick="window.print()" class="bg-white/20 hover:bg-white/30 px-3 py-1 rounded text-sm font-bold transition-colors">🖨️ Print PDF</button>
-            <button onclick="document.getElementById('finance-modal').classList.add('hidden')" class="text-white hover:text-red-300 text-2xl font-bold leading-none">&times;</button>
+<div id="finance-modal" class="fixed inset-0 w-full h-[100dvh] bg-gray-50 flex flex-col z-[9999] hidden overflow-hidden transition-all">
+    
+    <!-- MODAL FLOATING FILTER TAMPILAN -->
+    <div id="finance-view-modal" class="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[100000] hidden backdrop-blur-sm transition-opacity no-print">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden relative border border-gray-100">
+            <div class="bg-[#008069] p-4 border-b border-green-700 flex justify-between items-center text-white">
+                <h3 class="font-bold text-sm flex items-center gap-2">👁️ Atur Tampilan Laporan</h3>
+                <button onclick="document.getElementById('finance-view-modal').classList.add('hidden')" class="text-white hover:text-red-200 font-bold text-2xl leading-none">&times;</button>
+            </div>
+            <div class="p-5 space-y-3">
+                <p class="text-[11px] text-gray-500 mb-3 leading-snug">Matikan sakelar untuk menyembunyikan widget/panel dari layar dan dari hasil Cetak Laporan (Print).</p>
+                
+                <div class="flex justify-between items-center bg-gray-50 p-2.5 rounded-lg border border-gray-100">
+                    <span class="text-xs font-bold text-gray-700">Total Pemasukan</span>
+                    <label class="switch scale-90"><input type="checkbox" checked onchange="document.getElementById('card-pemasukan').classList.toggle('hidden', !this.checked)"><span class="slider"></span></label>
+                </div>
+                <div class="flex justify-between items-center bg-gray-50 p-2.5 rounded-lg border border-gray-100">
+                    <span class="text-xs font-bold text-gray-700">Total Pengeluaran</span>
+                    <label class="switch scale-90"><input type="checkbox" checked onchange="document.getElementById('card-pengeluaran').classList.toggle('hidden', !this.checked)"><span class="slider"></span></label>
+                </div>
+                <div class="flex justify-between items-center bg-gray-50 p-2.5 rounded-lg border border-gray-100">
+                    <span class="text-xs font-bold text-gray-700">Total Pending</span>
+                    <label class="switch scale-90"><input type="checkbox" checked onchange="document.getElementById('card-pending').classList.toggle('hidden', !this.checked)"><span class="slider"></span></label>
+                </div>
+                <div class="flex justify-between items-center bg-gray-50 p-2.5 rounded-lg border border-gray-100">
+                    <span class="text-xs font-bold text-gray-700">Saldo Bersih</span>
+                    <label class="switch scale-90"><input type="checkbox" checked onchange="document.getElementById('card-saldo').classList.toggle('hidden', !this.checked)"><span class="slider"></span></label>
+                </div>
+                <div class="flex justify-between items-center bg-gray-50 p-2.5 rounded-lg border border-gray-100">
+                    <span class="text-xs font-bold text-gray-700">Analisa (Status)</span>
+                    <label class="switch scale-90"><input type="checkbox" checked onchange="document.getElementById('card-top-status').classList.toggle('hidden', !this.checked)"><span class="slider"></span></label>
+                </div>
+                <div class="flex justify-between items-center bg-gray-50 p-2.5 rounded-lg border border-gray-100">
+                    <span class="text-xs font-bold text-gray-700">Analisa (Jenis)</span>
+                    <label class="switch scale-90"><input type="checkbox" checked onchange="document.getElementById('card-top-jenis').classList.toggle('hidden', !this.checked)"><span class="slider"></span></label>
+                </div>
+                <div class="flex justify-between items-center bg-gray-50 p-2.5 rounded-lg border border-gray-100">
+                    <span class="text-xs font-bold text-gray-700">Analisa (Kategori)</span>
+                    <label class="switch scale-90"><input type="checkbox" checked onchange="document.getElementById('card-top-kategori').classList.toggle('hidden', !this.checked)"><span class="slider"></span></label>
+                </div>
+                <button onclick="document.getElementById('finance-view-modal').classList.add('hidden')" class="w-full mt-4 bg-[#008069] text-white py-3 rounded-xl font-bold text-sm shadow-md hover:bg-green-700 transition-colors">Selesai</button>
+            </div>
         </div>
     </div>
 
-    <div class="flex-1 overflow-y-auto p-4 space-y-4">
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4" id="finance-analytics">
-            <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-200">
-                <h4 class="text-xs font-bold text-gray-500 uppercase border-b pb-1 mb-2">Status (Total Nilai)</h4>
-                <div id="ana-status" class="text-sm space-y-1">Memuat...</div>
-            </div>
-            <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-200">
-                <h4 class="text-xs font-bold text-gray-500 uppercase border-b pb-1 mb-2">Jenis</h4>
-                <div id="ana-jenis" class="text-sm space-y-1">Memuat...</div>
-            </div>
-            <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-200">
-                <h4 class="text-xs font-bold text-gray-500 uppercase border-b pb-1 mb-2">Kategori</h4>
-                <div id="ana-kategori" class="text-sm space-y-1">Memuat...</div>
-            </div>
-        </div>
+    <!-- HEADER FINANCE MODAL -->
+    <div class="bg-[#008069] px-5 py-3 text-white font-bold flex justify-between items-center shadow-md shrink-0 no-print">
+        <div class="flex items-center gap-2 md:gap-3">
+            <span class="text-sm md:text-lg">💳 Finance Dashboard</span>
+            
+            <!-- TOMBOL FILTER TAMPILAN -->
+            <button onclick="document.getElementById('finance-view-modal').classList.remove('hidden')" class="bg-white/20 hover:bg-white/30 text-white px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-1 transition-colors shadow-sm font-bold ml-1 md:ml-2">
+                <svg width="13" height="13" fill="currentColor" viewBox="0 0 16 16"><path d="M1.5 1.5A.5.5 0 0 1 2 1h12a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-.128.334L10 8.692V13.5a.5.5 0 0 1-.342.474l-3 1A.5.5 0 0 1 6 14.5V8.692L1.628 3.834A.5.5 0 0 1 1.5 3.5v-2zm1 .5v1.308l4.372 4.858A.5.5 0 0 1 7 8.5v5.306l2-.666V8.5a.5.5 0 0 1 .128-.334L13.5 3.308V2h-11z"/></svg> <span class="hidden md:inline">Tampilan</span>
+            </button>
 
-        <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-200 no-print flex flex-wrap gap-2 items-end">
-            <div class="flex-1 min-w-[200px]">
-                <label class="text-[10px] font-bold text-gray-500 uppercase">Cari (ID, Nama, Item)</label>
-                <input type="text" id="fin-search" oninput="renderFinanceTable()" class="w-full bg-gray-50 border border-gray-200 p-2 rounded text-sm outline-none focus:border-[#008069]" placeholder="Ketik kata kunci...">
-            </div>
-            <div>
-                <label class="text-[10px] font-bold text-gray-500 uppercase">Status</label>
-                <select id="fin-filter-status" onchange="renderFinanceTable()" class="w-full bg-gray-50 border border-gray-200 p-2 rounded text-sm outline-none">
-                    <option value="Semua">Semua</option>
-                    <option value="pending">Pending</option>
-                    <option value="reject">Reject</option>
-                    <option value="pemasukan">Pemasukan</option>
-                    <option value="pengeluaranb">Pengeluaran B</option>
-                </select>
-            </div>
-            <button onclick="loadFinanceData()" class="bg-[#008069] text-white px-4 py-2 rounded font-bold text-sm shadow hover:bg-green-700">Refresh Data</button>
+            <!-- TOMBOL PRINT -->
+            <button onclick="window.print()" class="bg-white/20 hover:bg-white/30 text-white px-2.5 py-1.5 rounded-lg text-xs flex items-center gap-1 transition-colors shadow-sm font-bold">
+                <svg width="13" height="13" fill="currentColor" viewBox="0 0 16 16"><path d="M2.5 8a.5.5 0 1 0 0-1 .5.5 0 0 0 0 1z"/><path d="M5 1a2 2 0 0 0-2 2v2H2a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h1v1a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-1h1a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-1V3a2 2 0 0 0-2-2H5zM4 3a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2H4V3zm1 5a2 2 0 0 0-2 2v1H2a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v-1a2 2 0 0 0-2-2H5zm7 2v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1z"/></svg> <span class="hidden md:inline">Cetak</span>
+            </button>
         </div>
+        <button onclick="document.getElementById('finance-modal').classList.add('hidden')" class="text-white hover:text-red-300 text-3xl leading-none">&times;</button>
+    </div>
 
-        <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
-            <table class="w-full text-left text-sm whitespace-nowrap">
-                <thead class="bg-gray-50 border-b border-gray-200 text-gray-600">
-                    <tr>
-                        <th class="p-3">Tgl (I)</th>
-                        <th class="p-3">ID / Konsumen (D,E)</th>
-                        <th class="p-3">Inv (R)</th>
-                        <th class="p-3">Item Detail (J)</th>
-                        <th class="p-3">Total (N)</th>
-                        <th class="p-3">Status (F)</th>
-                        <th class="p-3 text-center no-print">Aksi</th>
-                    </tr>
-                </thead>
-                <tbody id="finance-table-body" class="divide-y divide-gray-100">
-                    <tr><td colspan="7" class="p-5 text-center text-gray-400">Silakan Refresh Data...</td></tr>
-                </tbody>
-            </table>
+    <!-- AREA KONTEN MENGGULIR -->
+    <div class="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-6" id="finance-content">
+        <div id="finance-loading" class="text-center py-10 text-gray-500 hidden">
+            <div class="spinner mx-auto mb-3 border-[#008069]"></div>
+            <p class="font-bold">Memuat & Menganalisa Data Finance...</p>
+        </div>
+        
+        <div id="finance-main-ui" class="hidden flex flex-col space-y-6 max-w-7xl mx-auto pb-10 mt-2">
+            
+            <!-- BLOK KODE BARU: KOTAK INPUT JUDUL LAPORAN -->
+            <div class="w-full px-2">
+                <input type="text" id="finance-print-title" placeholder="Ketik Judul Laporan di sini (Opsional)..." 
+                       class="w-full text-center text-xl md:text-3xl font-black text-gray-800 bg-transparent border-b-2 border-dashed border-gray-200 hover:border-gray-300 focus:border-[#008069] outline-none pb-2 transition-colors placeholder-gray-300">
+            </div>
+
+            <!-- Dashboard Angka Utama (Diberi ID Container) -->
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div id="card-pemasukan" class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 border-l-4 border-l-blue-500">
+                    <p class="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1">Total Pemasukan</p>
+                    <h3 class="text-2xl font-black text-gray-800" id="dash-pemasukan">Rp 0</h3>
+                </div>
+                <div id="card-pengeluaran" class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 border-l-4 border-l-red-500">
+                    <p class="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1">Total Pengeluaran</p>
+                    <h3 class="text-2xl font-black text-gray-800" id="dash-pengeluaran">Rp 0</h3>
+                </div>
+                <div id="card-pending" class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 border-l-4 border-l-yellow-500">
+                    <p class="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1">Total Pending</p>
+                    <h3 class="text-2xl font-black text-gray-800" id="dash-pending">Rp 0</h3>
+                </div>
+                <div id="card-saldo" class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 border-l-4 border-l-green-500">
+                    <p class="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1">Saldo Bersih (In - Out)</p>
+                    <h3 class="text-2xl font-black text-gray-800" id="dash-saldo">Rp 0</h3>
+                </div>
+            </div>
+
+            <!-- Dashboard Analisa Top 3 (Diberi ID Container) -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div id="card-top-status" class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col">
+                    <h4 class="text-[11px] font-bold text-[#008069] uppercase border-b border-gray-100 pb-2 mb-3">📊 Analisa (Status)</h4>
+                    <div id="top-status" class="space-y-1">Memuat...</div>
+                </div>
+                <div id="card-top-jenis" class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col">
+                    <h4 class="text-[11px] font-bold text-[#008069] uppercase border-b border-gray-100 pb-2 mb-3">📁 Analisa (Jenis)</h4>
+                    <div id="top-jenis" class="space-y-1">Memuat...</div>
+                </div>
+                <div id="card-top-kategori" class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col">
+                    <h4 class="text-[11px] font-bold text-[#008069] uppercase border-b border-gray-100 pb-2 mb-3">🏷️ Analisa (Kategori)</h4>
+                    <div id="top-kategori" class="space-y-1">Memuat...</div>
+                </div>
+            </div>
+
+            <!-- Panel Filter -->
+            <div class="bg-white p-4 rounded-2xl shadow-sm border border-gray-200 no-print shrink-0">
+                <div class="flex justify-between items-center mb-3">
+                    <h4 class="text-xs font-bold text-gray-700 uppercase">🔎 Filter Data Transaksi</h4>
+                    <button onclick="loadFinanceData()" class="text-[#008069] bg-green-50 hover:bg-green-100 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors">🔄 Sync Data</button>
+                </div>
+                <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
+                    <div class="md:col-span-2">
+                        <label class="text-[9px] font-bold text-gray-500 uppercase">Cari (Nama/Item)</label>
+                        <input type="text" id="fin-filter-search" oninput="renderFinanceTable()" class="w-full bg-gray-50 border border-gray-200 p-2 rounded-lg text-xs outline-none focus:border-[#008069]" placeholder="Kata kunci...">
+                    </div>
+                    <div>
+                        <label class="text-[9px] font-bold text-gray-500 uppercase">Mulai Tgl</label>
+                        <input type="date" id="fin-filter-start" onchange="renderFinanceTable()" class="w-full bg-gray-50 border border-gray-200 p-2 rounded-lg text-xs outline-none focus:border-[#008069] cursor-pointer">
+                    </div>
+                    <div>
+                        <label class="text-[9px] font-bold text-gray-500 uppercase">Sampai Tgl</label>
+                        <input type="date" id="fin-filter-end" onchange="renderFinanceTable()" class="w-full bg-gray-50 border border-gray-200 p-2 rounded-lg text-xs outline-none focus:border-[#008069] cursor-pointer">
+                    </div>
+                    <div>
+                        <label class="text-[9px] font-bold text-gray-500 uppercase">Akun</label>
+                        <select id="fin-filter-akun" onchange="renderFinanceTable()" class="w-full bg-gray-50 border border-gray-200 p-2 rounded-lg text-xs outline-none cursor-pointer"><option value="Semua">Semua</option></select>
+                    </div>
+                    <div>
+                        <label class="text-[9px] font-bold text-gray-500 uppercase">Agen</label>
+                        <select id="fin-filter-agen" onchange="renderFinanceTable()" class="w-full bg-gray-50 border border-gray-200 p-2 rounded-lg text-xs outline-none cursor-pointer"><option value="Semua">Semua</option></select>
+                    </div>
+                    <div>
+                        <label class="text-[9px] font-bold text-gray-500 uppercase">Kategori</label>
+                        <select id="fin-filter-kategori" onchange="renderFinanceTable()" class="w-full bg-gray-50 border border-gray-200 p-2 rounded-lg text-xs outline-none cursor-pointer"><option value="Semua">Semua</option></select>
+                    </div>
+                    <div>
+                        <label class="text-[9px] font-bold text-gray-500 uppercase">Status</label>
+                        <select id="fin-filter-status" onchange="renderFinanceTable()" class="w-full bg-gray-50 border border-gray-200 p-2 rounded-lg text-xs outline-none cursor-pointer">
+                            <option value="Semua">Semua</option>
+                            <option value="pemasukan">Pemasukan</option>
+                            <option value="pengeluaran">Pengeluaran</option>
+                            <option value="pending">Pending</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tabel Transaksi -->
+            <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden shrink-0" id="finance-table-container">
+                <div class="overflow-x-auto">
+                   <table class="w-full text-left text-xs whitespace-nowrap">
+                        <thead class="bg-gray-100 border-b border-gray-200 text-gray-600 font-bold uppercase tracking-wider text-[10px]">
+                            <tr>
+                                <th class="p-3 text-center no-print min-w-[100px]">Aksi</th>
+                                <th class="p-3 resize-col min-w-[90px]">Tgl</th>
+                                <th class="p-3 resize-col min-w-[200px]">Item Detail</th>
+                                <th class="p-3 text-right resize-col min-w-[120px]">Total (Rp)</th>
+                                <th class="p-3 resize-col min-w-[150px]">Konsumen</th>
+                                <th class="p-3 resize-col min-w-[120px]">Status / Jenis</th>
+                                <th class="p-3 resize-col min-w-[120px]">Akun / Agen</th>
+                                <th class="p-3 resize-col">Kategori</th>
+                            </tr>
+                        </thead>
+                        <tbody id="finance-table-body" class="divide-y divide-gray-100"></tbody>
+                    </table>
+                </div>
+            </div>
+
         </div>
     </div>
 </div>
 
 <script>
-    // --- STATE FINANCE ---
     let financeDataCache = []; 
 
-    function openFinanceModal() {
+    function openFinancePanel() {
         document.getElementById('finance-modal').classList.remove('hidden');
         if(financeDataCache.length === 0) loadFinanceData();
     }
 
     function loadFinanceData() {
-        const tbody = document.getElementById('finance-table-body');
-        // FIX VISUAL: Menggunakan spinner Tailwind berwarna hijau tebal agar terlihat di background putih
-        tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center"><div class="animate-spin rounded-full h-8 w-8 border-b-4 border-[#008069] mx-auto"></div><p class="text-xs text-gray-500 mt-3 font-bold">Menarik data dari server...</p></td></tr>';
+        document.getElementById('finance-main-ui').classList.add('hidden');
+        document.getElementById('finance-loading').classList.remove('hidden');
         
         google.script.run
             .withSuccessHandler(data => {
+                document.getElementById('finance-loading').classList.add('hidden');
+                document.getElementById('finance-main-ui').classList.remove('hidden');
+                
                 if (!data || !Array.isArray(data)) {
                     financeDataCache = [];
-                    showToast("Sheet Finance kosong / tidak ditemukan.");
+                    showToast("Data Finance kosong / tidak ditemukan.");
                 } else {
                     financeDataCache = data;
+                    populateFilterOptions();
                 }
                 renderFinanceTable();
             })
             .withFailureHandler(err => {
+                document.getElementById('finance-loading').classList.add('hidden');
+                document.getElementById('finance-main-ui').classList.remove('hidden');
                 showToast("Gagal memuat data finance!");
-                // Jika script backend belum di-deploy/missing, UI akan menampilkan teks error merah ini
-                tbody.innerHTML = '<tr><td colspan="7" class="p-5 text-center text-red-500 font-bold bg-red-50">❌ Error: Skrip backend menolak permintaan. Pastikan router terpasang di code.gs!</td></tr>';
             })
             .getFinanceDataMaster(SHEET_URL); 
     }
 
-
-    function fetchFinanceData(forceRefresh = false) {
-    google.script.run
-        .withSuccessHandler(function(res) {
-            if (!res.exists) {
-                showToast(res.message); // Tampilkan pesan ramah, bukan error mentah
-                return;
+    function populateFilterOptions() {
+        let setAkun = new Set(), setAgen = new Set(), setKategori = new Set();
+        
+        financeDataCache.forEach(item => {
+            const row = item.values || item;
+            if (row && row.length > 0) {
+                if(row[1]) setAkun.add(String(row[1]).trim());
+                if(row[2]) setAgen.add(String(row[2]).trim());
+                if(row[7]) setKategori.add(String(row[7]).trim());
             }
-            renderFinanceTable(res.rows); // fungsi render kamu buat sesuai kolomnya
-        })
-        .withFailureHandler(function(e) {
-            showToast("Gagal memuat data Finance dari server.");
-        })
-        .getFinanceData(SHEET_URL, forceRefresh);
-}
+        });
 
-    function renderFinanceTable() {
-    const tbody = document.getElementById('finance-table-body');
-    
-    if (!financeDataCache || financeDataCache.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="p-5 text-center text-gray-400 italic">Belum ada data transaksi atau Sheet Finance kosong.</td></tr>';
-        document.getElementById('ana-status').innerHTML = '-';
-        document.getElementById('ana-jenis').innerHTML = '-';
-        document.getElementById('ana-kategori').innerHTML = '-';
-        return;
+        const fillSelect = (id, setVal) => {
+            let el = document.getElementById(id);
+            if(!el) return;
+            el.innerHTML = '<option value="Semua">Semua</option>';
+            Array.from(setVal).filter(Boolean).sort().forEach(v => {
+                el.innerHTML += `<option value="${v}">${v}</option>`;
+            });
+        };
+
+        fillSelect('fin-filter-akun', setAkun);
+        fillSelect('fin-filter-agen', setAgen);
+        fillSelect('fin-filter-kategori', setKategori);
     }
 
-    const searchKw = document.getElementById('fin-search').value.toLowerCase();
-    const statFilter = document.getElementById('fin-filter-status').value.toLowerCase();
-    
-    tbody.innerHTML = "";
-    let analytics = { status: {}, jenis: {}, kategori: {} };
+    function formatRupiah(angka) {
+        return (parseInt(angka) || 0).toLocaleString('id-ID');
+    }
 
-    financeDataCache.forEach(item => {
-        const row = item.values;       // <-- Ambil array baris asli
-        const rowIndex = item.rowIndex; // <-- Ambil nomor baris asli yang dijamin aman
+    function parseSheetDate(dateStr) {
+        if (!dateStr || dateStr === "-") return null;
+        let d = new Date(dateStr);
+        if (!isNaN(d.getTime())) return d;
+        const parts = String(dateStr).split(/[\/\-]/);
+        if (parts.length === 3) {
+            return new Date(`${parts[2]}-${parts[1]}-${parts[0]}`); 
+        }
+        return null;
+    }
+
+    function renderFinanceTable() {
+        const tbody = document.getElementById('finance-table-body');
         
-        const id = String(row[3] || "").toLowerCase();
-        const kons = String(row[4] || "").toLowerCase();
-        const itemStr = String(row[9] || "");
-        const stat = String(row[5] || "");
-        const total = parseFloat(row[13]) || 0;
-        const jenis = String(row[6] || "");
-        const kat = String(row[7] || "");
-        
-        if(statFilter !== "semua" && stat.toLowerCase() !== statFilter) return;
-        if(searchKw && !(id.includes(searchKw) || kons.includes(searchKw) || itemStr.toLowerCase().includes(searchKw))) return;
-
-        analytics.status[stat] = (analytics.status[stat] || 0) + total;
-        analytics.jenis[jenis] = (analytics.jenis[jenis] || 0) + total;
-        analytics.kategori[kat] = (analytics.kategori[kat] || 0) + total;
-
-        let itemHtml = "";
-        const itemMatches = itemStr.match(/\{.*?\}/g);
-        if(itemMatches) {
-            itemHtml = '<ul class="text-[10px] space-y-1 list-disc pl-3 text-gray-600">';
-            itemMatches.forEach(i => {
-                let clean = i.replace(/[{}]/g, '').split(',');
-                if(clean.length >= 4) {
-                    itemHtml += `<li><b>${clean[0].trim()}</b> - ${clean[1].trim()}x @Rp${clean[2].trim()} = Rp${clean[3].trim()}</li>`;
-                }
-            });
-            itemHtml += '</ul>';
-        } else {
-            itemHtml = `<span class="text-[11px] text-gray-500">${itemStr}</span>`;
+        if (!financeDataCache || financeDataCache.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" class="p-8 text-center text-gray-400 italic">Belum ada data transaksi.</td></tr>';
+            return;
         }
 
-        let waClean = row[3] ? String(row[3]).split('.')[0].replace(/\D/g, '') : "";
-        let btnVerify = stat.toLowerCase() === 'pending' 
-            ? `<a href="https://wa.me/${waClean}" target="_blank" class="text-blue-500 hover:text-blue-700 mx-1" title="Verifikasi WA">✅</a>` : '';
+        const kw = document.getElementById('fin-filter-search').value.toLowerCase();
+        const startStr = document.getElementById('fin-filter-start').value;
+        const endStr = document.getElementById('fin-filter-end').value;
+        const fAkun = document.getElementById('fin-filter-akun').value;
+        const fAgen = document.getElementById('fin-filter-agen').value;
+        const fKategori = document.getElementById('fin-filter-kategori').value;
+        const fStatus = document.getElementById('fin-filter-status').value.toLowerCase();
 
-        // Gunakan rowIndex yang dikirim dari objek backend
-        let btnQuick = `
-            <select onchange="updateFinanceStatus('${rowIndex}', this.value)" class="text-[10px] border border-gray-200 rounded p-1 ml-1 bg-gray-50 cursor-pointer">
-                <option value="">Ubah</option>
-                <option value="Pemasukan">Pemasukan</option>
+        const startDate = startStr ? new Date(startStr) : null;
+        const endDate = endStr ? new Date(endStr) : null;
+        if (startDate) startDate.setHours(0,0,0,0);
+        if (endDate) endDate.setHours(23,59,59,999);
+
+        let htmlBuilder = []; 
+        let totalMasuk = 0, totalKeluar = 0, totalPending = 0;
+        
+        // Penampung Agregasi (Semua Status)
+        let aggStatus = {}, aggJenis = {}, aggKategori = {};
+
+        financeDataCache.forEach(item => {
+            const row = item.values || item;
+            if (!row || row.length < 13) return; 
+
+            const rowIndex = item.rowIndex || 0;
+            const tgl = String(row[8] || "-"); 
+            const akun = String(row[1] || "-");
+            const agen = String(row[2] || "-");
+            const konsumen = String(row[4] || "-");
+            const idNetworking = String(row[3] || "");
+            const statusRaw = String(row[5] || "");
+            const statLower = statusRaw.toLowerCase();
+            const jenis = String(row[6] || "-");
+            const kategori = String(row[7] || "-");
+            const itemStr = String(row[9] || "-");
+            const total = parseFloat(row[13]) || 0;
+            const link = String(row[18] || "#");
+
+            // Filter
+            if (startDate || endDate) {
+                const rowDate = parseSheetDate(tgl);
+                if (rowDate) {
+                    if (startDate && rowDate < startDate) return;
+                    if (endDate && rowDate > endDate) return;
+                }
+            }
+            if (fAkun !== "Semua" && akun !== fAkun) return;
+            if (fAgen !== "Semua" && agen !== fAgen) return;
+            if (fKategori !== "Semua" && kategori !== fKategori) return;
+            if (fStatus !== "semua" && !statLower.includes(fStatus)) return;
+            
+            if (kw) {
+                if (!(konsumen.toLowerCase().includes(kw) || itemStr.toLowerCase().includes(kw) || idNetworking.toLowerCase().includes(kw))) {
+                    return;
+                }
+            }
+
+            // Agregasi Dasar (Top Section)
+            if (statLower.includes("pemasukan") || statLower.includes("lunas") || statLower.includes("omset")) {
+                totalMasuk += total;
+            } else if (statLower.includes("pengeluaran") || statLower.includes("debit")) {
+                totalKeluar += total;
+            } else if (statLower.includes("pending")) {
+                totalPending += total;
+            }
+
+            // Agregasi Universal untuk Tabel Top List (Tidak hanya Income)
+            if(statusRaw) aggStatus[statusRaw] = (aggStatus[statusRaw] || 0) + total;
+            if(jenis) aggJenis[jenis] = (aggJenis[jenis] || 0) + total;
+            if(kategori) aggKategori[kategori] = (aggKategori[kategori] || 0) + total;
+
+            let itemHtml = `<span class="text-[11px] text-gray-600 truncate max-w-[200px] inline-block" title="${itemStr}">${itemStr}</span>`;
+            let statColor = "bg-gray-100 text-gray-600";
+            if (statLower.includes("pemasukan")) statColor = "bg-green-100 text-green-700";
+            else if (statLower.includes("pengeluaran")) statColor = "bg-red-100 text-red-700";
+            else if (statLower.includes("pending")) statColor = "bg-yellow-100 text-yellow-700 animate-pulse";
+
+            let waClean = idNetworking ? idNetworking.split('.')[0].replace(/\D/g, '') : "";
+            let btnWa = statLower.includes('pending') ? `<a href="https://wa.me/${waClean}" target="_blank" class="text-blue-500 hover:text-blue-700" title="Verifikasi/Chat Konsumen">💬</a>` : '';
+            
+            let btnQuick = `<select onchange="updateFinanceStatus('${rowIndex}', this.value)" class="text-[9px] border border-gray-200 rounded p-1 ml-1 bg-gray-50 cursor-pointer outline-none">
+                <option value="">Aksi</option>
+                <option value="Pemasukan">Approve</option>
                 <option value="Reject">Reject</option>
-            </select>
-        `;
+            </select>`;
 
-        tbody.innerHTML += `
-            <tr class="hover:bg-gray-50">
-                <td class="p-3">${row[8] || '-'}</td>
-                <td class="p-3">
-                    <div class="font-bold text-gray-800">${row[4] || '-'}</div>
-                    <div class="text-[9px] text-gray-500">${row[3] || '-'}</div>
-                </td>
-                <td class="p-3 text-[10px]">${row[17] || '-'}</td>
-                <td class="p-3">${itemHtml}</td>
-                <td class="p-3 font-bold text-[#008069]">Rp ${total.toLocaleString('id-ID')}</td>
-                <td class="p-3"><span class="bg-gray-100 px-2 py-1 rounded text-[10px] font-bold uppercase">${stat}</span></td>
-                <td class="p-3 text-center no-print">
-                    <a href="${row[18] || '#'}" target="_blank" class="text-gray-500 hover:text-gray-800 mx-1" title="Lihat Drive">📁</a>
-                    ${btnVerify}
-                    ${btnQuick}
-                </td>
-            </tr>
-        `;
-    });
+            
 
-    const renderObj = (obj, targetId) => {
-        let html = '';
-        Object.entries(obj).sort((a,b) => b[1] - a[1]).forEach(([k, v]) => {
-            if(k) html += `<div class="flex justify-between border-b border-gray-50 py-0.5"><span class="text-[11px]">${k}</span><span class="font-bold text-[11px]">Rp ${v.toLocaleString('id-ID')}</span></div>`;
+            // BLOK KODE BARU: ROW TABEL (URUTAN MENGIKUTI HEADER)
+            // Tambahan "align-top" agar teks rata atas jika ada kolom yg tinggi
+            htmlBuilder.push(`
+                <tr class="hover:bg-gray-50 transition-colors border-b border-gray-100">
+                    <td class="p-3 text-center no-print flex items-center justify-center gap-1 align-top">
+                        <a href="${link}" target="_blank" class="text-gray-400 hover:text-gray-800" title="Buka Bukti Transaksi">🧾</a>
+                        ${btnWa}
+                        ${btnQuick}
+                    </td>
+                    <td class="p-3 align-top">${tgl}</td>
+                    <td class="p-3 align-top whitespace-normal min-w-[200px] leading-relaxed">${itemHtml}</td>
+                    <td class="p-3 font-black text-right text-[#008069] align-top">Rp ${formatRupiah(total)}</td>
+                    <td class="p-3 align-top">
+                        <div class="font-bold text-gray-800">${konsumen}</div>
+                        <div class="text-[9px] text-gray-400 font-mono">${idNetworking}</div>
+                    </td>
+                    <td class="p-3 align-top">
+                        <div class="mb-1"><span class="px-2 py-0.5 rounded text-[9px] font-extrabold uppercase ${statColor}">${statusRaw}</span></div>
+                        <div class="text-[9px] text-gray-500 font-bold uppercase">${jenis}</div>
+                    </td>
+                    <td class="p-3 align-top">
+                        <div class="font-bold text-gray-800">${akun}</div>
+                        <div class="text-[9px] text-gray-500">${agen}</div>
+                    </td>
+                    <td class="p-3 font-bold text-gray-600 align-top">${kategori}</td>
+                </tr>
+            `);
         });
-        document.getElementById(targetId).innerHTML = html || '<span class="text-gray-400 text-xs">Tidak ada data</span>';
-    };
-    renderObj(analytics.status, 'ana-status');
-    renderObj(analytics.jenis, 'ana-jenis');
-    renderObj(analytics.kategori, 'ana-kategori');
-}
+
+        tbody.innerHTML = htmlBuilder.length > 0 ? htmlBuilder.join('') : '<tr><td colspan="8" class="p-8 text-center text-gray-400 italic font-bold">Data tidak ditemukan berdasarkan filter saat ini.</td></tr>';
+
+        // Update Total
+        document.getElementById('dash-pemasukan').innerText = `Rp ${formatRupiah(totalMasuk)}`;
+        document.getElementById('dash-pengeluaran').innerText = `Rp ${formatRupiah(totalKeluar)}`;
+        document.getElementById('dash-pending').innerText = `Rp ${formatRupiah(totalPending)}`;
+        document.getElementById('dash-saldo').innerText = `Rp ${formatRupiah(totalMasuk - totalKeluar)}`;
+
+        // Fungsi Render Top 3 + Read More Hidden List
+        const renderTopLists = (dataObj, elementId) => {
+            const sorted = Object.entries(dataObj).sort((a, b) => b[1] - a[1]);
+            let html = '';
+            
+            if (sorted.length === 0) {
+                document.getElementById(elementId).innerHTML = '<p class="text-xs text-gray-400 text-center italic py-2">Belum ada data</p>';
+                return;
+            }
+
+            // Bagian Top 3 Selalu Tampil
+            sorted.slice(0, 3).forEach((item, index) => {
+                let rankColors = ['bg-yellow-100 text-yellow-700', 'bg-gray-200 text-gray-700', 'bg-orange-100 text-orange-700'];
+                let badgeClass = rankColors[index] || 'bg-gray-100 text-gray-500';
+                html += `
+                <div class="flex justify-between items-center bg-gray-50 p-2.5 rounded-lg border border-gray-100 mb-2">
+                    <div class="flex items-center gap-2 overflow-hidden pr-2">
+                        <span class="w-5 h-5 shrink-0 rounded flex items-center justify-center text-[10px] font-bold ${badgeClass}">#${index+1}</span>
+                        <span class="text-[11px] font-bold text-gray-700 truncate" title="${item[0]}">${item[0] || '-'}</span>
+                    </div>
+                    <span class="text-[11px] font-black text-[#008069] shrink-0">Rp ${formatRupiah(item[1])}</span>
+                </div>`;
+            });
+
+            // Bagian Sisa disembunyikan dalam Read More
+            if (sorted.length > 3) {
+                let moreHtml = '';
+                sorted.slice(3).forEach((item, index) => {
+                    moreHtml += `
+                    <div class="flex justify-between items-center p-2 border-b border-gray-50 hover:bg-gray-50 transition-colors last:border-0">
+                        <div class="flex items-center gap-2 overflow-hidden pr-2">
+                            <span class="text-[10px] font-bold text-gray-400 w-4">#${index+4}</span>
+                            <span class="text-[11px] font-medium text-gray-600 truncate" title="${item[0]}">${item[0] || '-'}</span>
+                        </div>
+                        <span class="text-[10px] font-bold text-gray-500 shrink-0">Rp ${formatRupiah(item[1])}</span>
+                    </div>`;
+                });
+
+                const toggleId = 'more-' + elementId;
+                html += `
+                <div id="${toggleId}" class="hidden mt-1 bg-white border border-gray-100 rounded-lg shadow-inner">${moreHtml}</div>
+                <button onclick="const el = document.getElementById('${toggleId}'); el.classList.toggle('hidden'); this.innerHTML = el.classList.contains('hidden') ? 'Lihat Semua (+' + ${sorted.length - 3} + ') ▼' : 'Sembunyikan ▲'" 
+                        class="w-full mt-2 text-[10px] font-bold text-[#008069] bg-green-50 hover:bg-green-100 py-2 rounded-lg transition-colors border border-green-100">
+                    Lihat Semua (+${sorted.length - 3}) ▼
+                </button>
+                `;
+            }
+
+            document.getElementById(elementId).innerHTML = html;
+        };
+
+        renderTopLists(aggStatus, 'top-status');
+        renderTopLists(aggJenis, 'top-jenis');
+        renderTopLists(aggKategori, 'top-kategori');
+    }
 
     function updateFinanceStatus(rowIndex, newStatus) {
         if(!newStatus) return;
-        showToast("Memperbarui status...");
+        if(!confirm(`Yakin ingin mengubah status transaksi menjadi ${newStatus}?`)) return;
+        showToast("Memperbarui status transaksi ke sistem...");
+        
         google.script.run
             .withSuccessHandler(res => { showToast(res); loadFinanceData(); })
-            .withFailureHandler(err => showToast("Gagal update"))
+            .withFailureHandler(err => showToast("❌ Gagal update. Server Error."))
             .updateFinanceRowStatus(SHEET_URL, rowIndex, newStatus);
     }
 </script>
+
+
 
 </body>
 </html>

@@ -1902,3 +1902,86 @@ function updateFinanceRowStatus(sheetUrl, rowIndex, newStatus) {
     throw new Error(e.message);
   }
 }
+
+// =========================================================================
+// FUNGSI BARU: MENGHAPUS BARIS DI SHEET FINANCE
+// =========================================================================
+function deleteFinanceRowMaster(sheetInput, rowIndex) {
+  try {
+    // 1. Ekstrak ID dari URL jika formatnya link
+    var sheetId = sheetInput.match(/\/d\/([a-zA-Z0-9-_]+)/) ? sheetInput.match(/\/d\/([a-zA-Z0-9-_]+)/)[1] : sheetInput;
+    var ss = SpreadsheetApp.openById(sheetId);
+    var sheetFinance = ss.getSheetByName("Finance");
+    
+    if (!sheetFinance) return "error: sheet_not_found";
+    
+    // 2. Pastikan rowIndex berupa angka bulat
+    var rowToDelete = parseInt(rowIndex);
+    
+    // 3. Validasi Keamanan: Cegah penghapusan header (Baris 1)
+    if (rowToDelete > 1) {
+      sheetFinance.deleteRow(rowToDelete);
+      return "success";
+    } else {
+      throw new Error("Permintaan tidak valid. Tidak bisa menghapus Header.");
+    }
+  } catch (err) {
+    throw new Error("Gagal mengeksekusi penghapusan: " + err.message);
+  }
+}
+
+
+// blok kode baru
+function updateFinanceDataFull(sheetUrl, rowIndex, dataObj) {
+  try {
+    var ss = SpreadsheetApp.openByUrl(sheetUrl);
+    var sheet = ss.getSheetByName("Finance"); 
+    if(!sheet) throw new Error("Sheet Finance tidak ditemukan.");
+
+    var isNew = (rowIndex === "NEW" || rowIndex === "" || rowIndex == null);
+    var targetRow;
+
+    // Tentukan baris target (Baris Baru vs Baris Lama)
+    if (isNew) {
+       targetRow = sheet.getLastRow() + 1;
+    } else {
+       targetRow = parseInt(rowIndex);
+    }
+
+    // Siapkan array dengan 22 elemen kosong (Sesuai jumlah Kolom A - V)
+    var rowData = new Array(22).fill("");
+
+    // Jika Edit, baca dulu data lamanya agar kolom yang tidak diedit (seperti Timestamps / File / Link Drive) tidak hilang
+    if (!isNew) {
+      rowData = sheet.getRange(targetRow, 1, 1, 22).getValues()[0];
+    } else {
+      // Jika Baru, buat Timestamp
+      rowData[0] = new Date(); 
+    }
+
+    // Mapping ulang array berdasarkan inputan user (Indeks array dimulai dari 0)
+    rowData[1]  = dataObj.colB; // Akun
+    rowData[2]  = dataObj.colC; // Agen
+    rowData[3]  = dataObj.colD; // ID Networking
+    rowData[4]  = dataObj.colE; // Nama Konsumen
+    rowData[5]  = dataObj.colF; // Status
+    rowData[6]  = dataObj.colG; // Jenis A
+    rowData[7]  = dataObj.colH; // Jenis B
+    rowData[8]  = dataObj.colI; // Tgl Transaksi
+    rowData[9]  = dataObj.colJ; // Nama Item
+    rowData[10] = dataObj.colK; // Qty
+    rowData[11] = dataObj.colL; // Satuan
+    rowData[12] = dataObj.colM; // Harga Satuan
+    rowData[13] = dataObj.colN; // Total
+    rowData[14] = dataObj.colO; // Note
+    rowData[17] = dataObj.colR; // No Inv
+    rowData[21] = dataObj.colV; // Bulan
+
+    // BATCH EXECUTION: Tulis 22 Kolom sekaligus dalam 1 Tarikan Napas (SUPER CEPAT)
+    sheet.getRange(targetRow, 1, 1, 22).setValues([rowData]);
+
+    return "success";
+  } catch(e) {
+    throw new Error(e.message);
+  }
+}

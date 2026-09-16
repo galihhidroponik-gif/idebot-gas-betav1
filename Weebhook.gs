@@ -33,8 +33,9 @@ function doPostLibrary(e, clientSheetId) {
     // =================================================================================
     // 2. PRE-FILTER & CUSTOM AUTOREPLY JID GRUP (DENGAN SHEET LOG)
     // =================================================================================
-    // Toleransi deteksi grup diperluas agar mendeteksi Onesender & Fonnte (isgroup)
-    let isGroup = data.is_group === true || data.isGroup === true || data.isgroup === true || String(data.chat_type).toLowerCase() === "group" || String(data.chat || "").includes("@g.us") || String(data.from || "").includes("@g.us");
+    let rawDataStrFilter = JSON.stringify(data);
+    // SUPER SCAN: Cari @g.us di seluruh teks payload json agar tidak ada grup yang lolos filter
+    let isGroup = rawDataStrFilter.includes("@g.us") || data.is_group === true || data.isGroup === true || data.isgroup === true || String(data.chat_type).toLowerCase() === "group";
     
     // Toleransi pembacaan teks pesan (Fonnte menggunakan data.pesan)
     let pesanTeks = String(data.pesan || data.message || data.message_text || data.text || "").trim().toLowerCase();
@@ -113,16 +114,17 @@ function doPostLibrary(e, clientSheetId) {
 
     // 2. MODIFIKASI FILTER: Bypass pesan dari grup HANYA JIKA perintah valid
     let isFinanceCommand = pesanTeks.startsWith("/finance");
+    let isTicketCommandFilter = pesanTeks.startsWith("/ticket"); // BLOK KODE BARU
 
     // 1. Filter Trivial: Pesan sampah yang wajar terjadi sehari-hari. Langsung buang, JANGAN buang kuota untuk LOG.
-    let isTrivialIgnore = (isGroup && !isGroupIdCommand && !isFinanceCommand) || isNewsletter || isSticker || isBroadcast;
+    let isTrivialIgnore = (isGroup && !isGroupIdCommand && !isFinanceCommand && !isTicketCommandFilter) || isNewsletter || isSticker || isBroadcast;
 
-    // 2. Filter Anomali: Error teknis dari webhook (duplikat/kosong). Perlu di-log untuk investigasi.
-    let isAnomalyIgnore = isDuplicatePayload; 
-
+    // 2. Filter Anomali: Cegah pesan grup agar TIDAK TERBACA sebagai anomali duplikat
+    let isAnomalyIgnore = isDuplicatePayload && !isGroup; 
+    
     if (isTrivialIgnore || isAnomalyIgnore) {
     
-    // Hanya lakukan operasi WRITE ke Sheet LOG jika itu anomali (menghemat 90% kuota log)
+    // Hanya lakukan operasi WRITE ke Sheet LOG jika itu murni anomali
     if (isAnomalyIgnore && (data.device !== undefined || data.senderlid !== undefined || data.sender !== undefined)) {
         logWebhookError("[JSON BLOCKED] Alasan: PAYLOAD_KOSONG_ATAU_DUPLIKAT", e.postData.contents, clientSheetId);
     }
@@ -306,11 +308,50 @@ function processWebhook(data, clientSheetId, urlDevice = null) {
   try {
     let mappedData = {}, bsuid = "";
 
-    // Deteksi grup universal (Tambahkan data.isgroup untuk Fonnte)
-    let isPesanGrup = data.is_group === true || data.isGroup === true || data.isgroup === true || String(data.chat_type).toLowerCase() === "group" || String(data.chat || "").includes("@g.us") || String(data.to_id || "").includes("@g.us") || String(data.from || "").includes("@g.us");
+    // Deteksi grup universal menggunakan SUPER SCAN Regex JSON
+    let rawDataStrWebhook = JSON.stringify(data);
+    let isPesanGrup = rawDataStrWebhook.includes("@g.us") || data.is_group === true || data.isGroup === true || data.isgroup === true || String(data.chat_type).toLowerCase() === "group";
 
     // 1. PARSING DATA (Dukung Fonnte, Starsender, dan Onesender)
     let currentTimeISO = new Date().toISOString(); 
+    
+    // =========================================================================
+    // BLOK KODE BARU: UNIVERSAL QUOTED EXTRACTOR (Mengamankan Konteks Story/Tag)
+    // =========================================================================
+    let quotedContext = "";
+    let isReplyToEmptyMedia = false; // FLAG BARU: Deteksi balas story/gambar tanpa caption
+
+    try {
+        // 1. Ekstraksi untuk Starsender
+        if (data.quoted_message !== undefined && data.quoted_message !== null) {
+            if (typeof data.quoted_message === 'string' && data.quoted_message.trim() !== "") {
+                quotedContext = data.quoted_message.trim();
+            } else {
+                // Starsender: Reply sesuatu, tapi isinya kosong
+                isReplyToEmptyMedia = true;
+            }
+        } 
+        // 2. Ekstraksi untuk Onesender (Deteksi Body dan JID)
+        else if (data.context && typeof data.context === 'object') {
+            let bodyContext = data.context.body ? String(data.context.body).trim() : "";
+            let jidContext = data.context.jid ? String(data.context.jid).trim() : "";
+            
+            if (bodyContext !== "") {
+                quotedContext = bodyContext; 
+            } else if (jidContext !== "") {
+                // Onesender: Tag komen terhadap gambar/media tanpa caption/teks
+                isReplyToEmptyMedia = true;
+            }
+        }
+        
+        // 3. Injeksi ke Prompt (Hanya jika caption ada isinya)
+        if (quotedContext !== "") {
+            quotedContext = "[Merupakan Komen Tag/quoted user dari pesan sebelumnya : " + quotedContext.substring(0, 100).replace(/\n/g, ' ') + "...]";
+        }
+    } catch(e) {
+        // Silently catch error agar tidak merusak antrean
+    }
+    // =========================================================================
     
     if (data.device !== undefined && data.inboxid !== undefined) {
       // A. KONDISI FONNTE (Memiliki key 'device' dan 'inboxid')
@@ -318,38 +359,37 @@ function processWebhook(data, clientSheetId, urlDevice = null) {
       bsuid = String(data.senderlid || data.memberlid || "");
       let lampiranUrl = data.url || "";
       let isMeFonnte = data.quick ? true : false;
-      
-      // [PERBAIKAN BUG]: Jika pesan keluar dari Admin (quick=true), paksa 'from' menjadi nomor Device
       let pengirimAsli = (isPesanGrup && data.member) ? data.member : (isMeFonnte ? myNumNorm : data.sender);
+      let rawMsg = data.pesan || data.message || ""; // BLOK KODE BARU
       
       mappedData = {
         nomor_device: myNumNorm, 
         from: normalizePhone(pengirimAsli),
         is_group: isPesanGrup, 
         is_me: isMeFonnte,
-        message: data.pesan || data.message || "", 
+        message: rawMsg + (quotedContext !== "" ? "\n" + quotedContext : ""), // Perbaikan: Gunakan \n dan cek apakah ada quote
         message_id: data.inboxid || "",
         push_name: !isMeFonnte ? String(normalizePushName(data.name) || ""): "",
         received_at: formatTime(currentTimeISO), 
         tglformat: getOnlyDate(currentTimeISO),
-        to: normalizePhone(isMeFonnte ? data.sender : ""), // Nomor tujuan Customer
+        to: normalizePhone(isMeFonnte ? data.sender : ""), 
         file_url: lampiranUrl,
         message_type: data.type || (lampiranUrl ? "media" : "text"),
-        is_fonnte: true // [PERBAIKAN BUG]: Flag khusus untuk memutus halusinasi Fonnte di bawah
+        is_fonnte: true 
       };
     }
     else if (data.version || data.message_timestamp) {
-      // B. Onesenser : kondisi jika json memiliki data kolom bernama 'version'
-      // JIKA urlDevice ADA (tambahkan setelah exec '?device=6281234567890'), UTAMAKAN ITU.
+      // B. Onesenser
       let myNumNorm = urlDevice ? normalizePhone(urlDevice) : normalizePhone(data.is_from_me ? data.sender_phone : data.to_id);
-      
       bsuid = String(data.sender_lid || "");
       let lampiranUrl = data.attachment_url || data.file || "";
+      let rawMsg = data.message_text || data.message || ""; // BLOK KODE BARU
       
       mappedData = {
         nomor_device: myNumNorm, from: normalizePhone(data.sender_phone || data.from || ""),
         is_group: isPesanGrup, is_me: data.is_from_me || false,
-        message: data.message_text || data.message || "", message_id: data.message_id || "",
+        message: rawMsg + (quotedContext !== "" ? "\n" + quotedContext : ""), // Perbaikan: Gunakan \n dan cek apakah ada quote
+        message_id: data.message_id || "",
         push_name: !data.is_from_me ? String(normalizePushName(data?.sender_push_name) || ""): "",
         received_at: formatTime(data.message_timestamp), tglformat: getOnlyDate(data.message_timestamp),
         to: normalizePhone(data.to_id || ""), 
@@ -357,17 +397,17 @@ function processWebhook(data, clientSheetId, urlDevice = null) {
         message_type: data.message_type || (lampiranUrl ? "media" : "text")
       };
     } else {
-      // C. starsender tidak memiliki kolom 'version'
-      // JIKA urlDevice ADA (tambahkan setelah exec '?device=6281234567890'), UTAMAKAN ITU.
+      // C. starsender
       let myNumNorm = urlDevice ? normalizePhone(urlDevice) : normalizePhone(data.is_me ? data.from : data.to);
-      
       bsuid = String(data.sender || ""); 
       let lampiranUrl = data.file || data.attachment_url || "";
+      let rawMsg = data.message || data.text || ""; // BLOK KODE BARU
       
       mappedData = {
         nomor_device: myNumNorm, from: normalizePhone(data.from || ""),
         is_group: isPesanGrup, is_me: data.is_me || false,
-        message: data.message || data.text || "", message_id: data.message_id || "",
+        message: rawMsg + (quotedContext !== "" ? "\n" + quotedContext : ""), // Perbaikan: Gunakan \n dan cek apakah ada quote
+        message_id: data.message_id || "",
         push_name: !data.is_me ? String(normalizePushName(data?.push_name) || ""): "",
         received_at: formatTime(data.received_at), tglformat: getOnlyDate(data.received_at),
         to: normalizePhone(data.to || ""), 
@@ -382,23 +422,38 @@ function processWebhook(data, clientSheetId, urlDevice = null) {
     let isiPesanFilter = String(mappedData.message).trim().toLowerCase();
     
     let isFinanceProcess = isiPesanFilter.startsWith("/finance");
+    let isTicketProcess = isiPesanFilter.startsWith("/ticket"); // BLOK KODE BARU
 
-    // KEMBALIKAN @g.us YANG TERPOTONG KHUSUS UNTUK /group_id DAN /finance
-    if (mappedData.is_group && (isiPesanFilter === "/group_id" || isFinanceProcess)) {
-        let fullGroupId = data.group_jid || data.senderlid || data.chat || data.group_id || (mappedData.is_me ? data.to : data.from);
-        if (fullGroupId && !String(fullGroupId).includes("@g.us")) {
-            fullGroupId = String(fullGroupId) + "@g.us";
-        }
-        // Timpa value to/from yang terpotong dengan ID grup utuh
-        if (mappedData.is_me) {
-            mappedData.to = fullGroupId;
+    // =========================================================================
+    // MODIFIKASI PENTING: KUNCI ID GRUP (@g.us) SECARA MUTLAK (Regex Extractor).
+    // =========================================================================
+    if (mappedData.is_group) {
+        let extractedGroupId = "";
+        // Cekik langsung ID grup murni dari raw payload sebelum tersentuh normalizePhone
+        let matchGroup = rawDataStrWebhook.match(/"([^"]*@g\.us)"/);
+        
+        if (matchGroup && matchGroup[1]) {
+            extractedGroupId = matchGroup[1];
         } else {
-            mappedData.from = fullGroupId;
+            // Fallback (Jaga-jaga jika regex luput)
+            extractedGroupId = data.group_jid || data.senderlid || data.chat || data.group_id || (mappedData.is_me ? data.to : data.from);
+            if (extractedGroupId && !String(extractedGroupId).includes("@g.us")) {
+                extractedGroupId = String(extractedGroupId) + "@g.us";
+            }
         }
+        
+        // Kunci sebagai WA (Kolom F -> mappedData.to/from)
+        if (mappedData.is_me) {
+            mappedData.to = extractedGroupId;
+        } else {
+            mappedData.from = extractedGroupId;
+        }
+        
+        // Kunci sebagai BSUID (Kolom G)
+        bsuid = extractedGroupId; 
     }
-
-    // Tolak pesan grup KECUALI isinya "/group_id" ATAU diawali "/finance"
-    let tolakGrup = mappedData.is_group && isiPesanFilter !== "/group_id" && !isFinanceProcess;
+    // Tolak pesan grup KECUALI isinya "/group_id", "/finance", ATAU "/ticket"
+    let tolakGrup = mappedData.is_group && isiPesanFilter !== "/group_id" && !isFinanceProcess && !isTicketProcess;
 
     // Filter Penjaga Kedua
     if (bsuid.toLowerCase().includes("@newsletter") || tolakGrup || (mappedData.message_type || "").toLowerCase() === "sticker") {
@@ -474,30 +529,18 @@ function processWebhook(data, clientSheetId, urlDevice = null) {
 
     let finalC = "", finalH = "", finalI = oldData ? (oldData.biodata || "") : "";
 
-    if (!oldData) {
-      let namaPanggilanWakif = "";
-      try {
-        let sheetWakif = ss.getSheetByName("🧑🏻 WAKIF");
-        if (sheetWakif) {
-          let lastRowWakif = sheetWakif.getLastRow();
-          if (lastRowWakif >= 2) {
-            let dataWakif = sheetWakif.getRange("A2:B" + lastRowWakif).getValues();
-            let searchNum = normalizePhone(mappedData.from); 
-            for (let i = 0; i < dataWakif.length; i++) {
-              if (normalizePhone(dataWakif[i][0]) === searchNum && dataWakif[i][1]) {
-                namaPanggilanWakif = String(dataWakif[i][1]).trim(); break; 
-              }
-            }
-          }
-        }
-      } catch (e) {}
-
-      finalH = namaPanggilanWakif ? namaPanggilanWakif : (mappedData.push_name ? "CEK_" + mappedData.push_name : "");
+if (!oldData) {
+      // Langsung gunakan push_name WhatsApp untuk kontak baru tanpa query ke sheet eksternal
+      finalH = mappedData.push_name ? "CEK_" + mappedData.push_name : "Customer";
+      
       let initialLabels = [config.device.autoLabel || "NEW"];
       for(let kw of foundKeywordsArr) { if(!initialLabels.includes(kw)) initialLabels.push(kw); }
       finalC = initialLabels.join(", ");
+      
     } else {
+      // Pertahankan nama lama jika kontak sudah terdaftar di database
       finalH = oldData.pushName || (mappedData.push_name ? "CEK_" + mappedData.push_name : "");
+      
       let arrayLabelLama = oldData.labelwa ? String(oldData.labelwa).split(",").map(t => t.trim()).filter(Boolean) : [];
       if (foundKeywordsArr.length > 0 && mappedData.is_me) {
         for (let kw of foundKeywordsArr) { if (!arrayLabelLama.includes(kw)) arrayLabelLama.push(kw); }
@@ -513,16 +556,16 @@ function processWebhook(data, clientSheetId, urlDevice = null) {
         // 1. Override Nama (Kolom H)
         let namaGrupAtauPengirim = data.to_group_name || data.push_name || data.participant_name || data.group_name || "unknown";
         finalH = "Group : " + namaGrupAtauPengirim;
-
-        // 2. Tambahkan Label "GROUP" (Kolom C) jika belum ada
-        let arrayLabelGroup = finalC ? finalC.split(",").map(s => s.trim()) : [];
         
-        // Mengecek apakah "GROUP" sudah ada di dalam array (Case Insensitive)
-        let hasGroupLabel = arrayLabelGroup.some(label => label.toUpperCase() === "GROUP");
+        // 2. Tambahkan Label "GROUP" dan "UNSUBAI" secara presisi dan anti-duplikat
+        let arrayLabelGroup = finalC ? finalC.split(",").map(s => s.trim()).filter(Boolean) : [];
         
-        if (!hasGroupLabel) {
-            arrayLabelGroup.push("GROUP, UNSUBAI");
-        }
+        // Cek masing-masing label secara terpisah
+        let hasGroup = arrayLabelGroup.some(label => label.toUpperCase() === "GROUP");
+        let hasUnsub = arrayLabelGroup.some(label => label.toUpperCase() === "UNSUBAI");
+        
+        if (!hasGroup) arrayLabelGroup.push("GROUP");
+        if (!hasUnsub) arrayLabelGroup.push("UNSUBAI");
         
         // Gabungkan kembali menjadi string dengan koma
         finalC = arrayLabelGroup.join(", ");
@@ -797,8 +840,8 @@ textForFinance = String(textForFinance).trim();
         let valAkun         = getVal("Akun");
         let valAgen         = getVal("Agen");
         
-        let valJenis    = getVal("Jenis");
-        let valKategori = getVal("Kategori");
+        let valJenisA    = getVal("JenisA") || getVal("Jenis") || getVal("Akun Debit") ;
+        let valJenisB = getVal("JenisB") || getVal("Kategori") || getVal("Akun Kredit");
         let valTgl      = getVal("Tgl Transaksi") || getVal("Tanggal");
         let valNamaItem = getVal("Nama Item");
         let valQty      = getVal("Qty") || getVal("Quantity");
@@ -823,7 +866,7 @@ textForFinance = String(textForFinance).trim();
         let finalAkunFinance = valAkun ? valAkun : namaAkun;
         let finalAgenFinance = valAgen ? valAgen : finalColD;
 
-        let manualDataCSV = valJenis + ";;" + valKategori + ";;" + valTgl + ";;" + valNamaItem + ";;" + valQty + ";;" + valSatuan + ";;" + valHarga + ";;" + valTotal + ";;" + valNomorStruk + ";;" + valStatus;
+        let manualDataCSV = valJenisA + ";;" + valJenisB + ";;" + valTgl + ";;" + valNamaItem + ";;" + valQty + ";;" + valSatuan + ";;" + valHarga + ";;" + valTotal + ";;" + valNomorStruk + ";;" + valStatus;
         let logTambahan = "Input Manual via /finance\n" + imagePipelineLogs.join("\n");
 
         logImageActivity(finalUniqueIdB, logTambahan, driveLink, manualDataCSV, finalAgenFinance, finalAkunFinance, finalNamaKonsumen, clientSheetId, mappedData, namaFile, textForFinance);
@@ -850,20 +893,20 @@ textForFinance = String(textForFinance).trim();
                 promptVision = "### [TUGAS KHUSUS: FINANCE AI HYBRID MULTI-ITEM]\n"+
                 "Ekstrak bukti transaksi/struk belanja. Pisahkan nilai menggunakan Double Titik Koma (;;) persis seperti pola berikut:\n"+
                 "Pending|Jenis;;Kategori;;Tgl Transaksi;;Nama Item (Garis Besar);;Qty;;Satuan;;Harga Satuan;;Total;;NomorStrukatauReferensi\n\n"+
-                "Keterangan Aturan Isi :\n"+
-                "- Status = Wajib isi Pending|\n"+
-                "- Jenis = Transfer / Cash / Bukan Bukti Transfer.\n"+
-                "- Kategori = isi kategori transaksi.\n"+
-                "- Tgl Transaksi = Ambil dari struk. Jika tidak ada, pakai tanggal hari ini dengan format 22/08/2026 3:56:19\n"+
-                "- Nama Item = Nama atau peruntukan isi transaksi/kwitansi secara garis besar\n"+
-                "Kolom 'Qty' diisi kuantitas jenis item misal ada ada list besi beton ulir dan besi beton polos maka Qty isi 2\n"+
-                "- Satuan = jika hanya item tunggal bisa gunakan pcs, paket, kotak, dll namun jika multi item gunakan aturan\n"+
-                "ATURAN KHUSUS MULTI-ITEM: Rincikan tiap barang dari struk ke dalam kolom 'Satuan' WAJIB menggunakan format {Nama Barang, Qty, Harga Satuan, Subtotal}. " +
-                "Contoh struk dengan 2 barang: {Besi Beton Ulir 13, 30, 142000, 4260000}{Besi Beton Polos 8, 30, 54000, 1620000}. " +
+                "Keterangan Aturan Isi wajib ada 9 kolom data:\n"+
+                "1. Status = Wajib isi Pending|Jenis\n"+
+                "Aturan Jenis = Transfer / Cash / NonTransaksi.\n"+
+                "2. Kategori = isi kategori transaksi.\n"+
+                "3. Tgl Transaksi = Ambil dari struk. Jika tidak ada, pakai tanggal hari ini dengan format 22/08/2026 3:56:19\n"+
+                "4. Nama Item = Nama atau peruntukan isi transaksi/kwitansi secara garis besar\n"+
+                "5. Kolom 'Qty' diisi kuantitas jenis item misal ada ada list besi beton ulir dan besi beton polos maka Qty isi 2\n"+
+                "6. Satuan = jika hanya item tunggal bisa gunakan pcs, paket, kotak, dll namun jika multi item gunakan aturan\n"+
+                "ATURAN KHUSUS MULTI-ITEM: Rincikan tiap barang dari struk ke dalam kolom 'Satuan' WAJIB menggunakan format {Nama Barang, Qty, Satuan, Harga Satuan, Subtotal}. " +
+                "Contoh struk dengan 2 barang: {Besi Beton Ulir 13, 30, Pcs, 142000, 4260000}{Besi Beton Polos 8, 30, Pcs, 54000, 1620000}. " +
                 "PENTING: Jangan gunakan spasi atau koma di antara kurung kurawal penutup dan pembuka }{. Hilangkan tanda titik/koma pada nilai angka harga. Pajak dimasukan dianggap sebagai item yang berdiri sendiri dengan nama pajak PB1 ppn11% misalnya, dan admin bank juga berdiri sendiri" +
-                "- Harga Satuan = untuk multi item bisa dikasih rata rata dari harga satuan per item.\n"+
-                "- Total = Harga penjumlahan dari semua item dalam struk kwitansi /n"+
-                "- NomorStrukatauReferensi = Ekstrak kode unik referensi (Misal: No. Ref BRI/Mandiri, No Transaksi BSI, ID Transaksi DANA, No Urut BCA). Jika tidak ada, biarkan KOSONG (jangan tulis strip/tanda baca/kata).\n\n";
+                "7. Harga Satuan = untuk multi item bisa diberi tanda - (kosong)\n"+
+                "8 Total = Harga penjumlahan dari semua item dalam struk kwitansi /n"+
+                "9 NomorStrukatauReferensi = Ekstrak kode unik referensi (Misal: No. Ref BRI/Mandiri, No Transaksi BSI, ID Transaksi DANA, No Urut BCA). Jika tidak ada, biarkan KOSONG (jangan tulis strip/tanda baca/kata).\n\n";
             } else {
                 promptVision = "### [TUGAS KHUSUS ANALISIS GAMBAR]\n"+
                 "Ekstrak data bukti mutasi/transfer/gambar dengan format presisi. Pisahkan setiap nilai menggunakan Double Titik Koma (;;) persis seperti pola berikut:\n"+
@@ -952,13 +995,24 @@ textForFinance = String(textForFinance).trim();
                 historyUpdatefix += "\n[Admin Eksekusi /financeai]";
             } else {
                 // JALUR 2: USER BIASA (Murni AI)
-                // Sisipkan AI Label di belakang array (Index ke-9) agar logImageActivity mendeteksinya
-                aiExtractedData = deskripsiGambar + ";;" + aiLabel; 
+                // 1. Pecah hasil ekstraksi gambar menjadi Array
+                let csvPartsUser = deskripsiGambar.split(";;");
                 
+                // 2. ARRAY PADDING: Kunci jumlah elemen tepat 9 agar tidak ada pergeseran indeks di Finance
+                while (csvPartsUser.length < 9) {
+                    csvPartsUser.push("");
+                }
+                
+                // 3. PAKSA status "Pending" di akhir string khusus untuk Sheet Finance (Index 9)
+                aiExtractedData = csvPartsUser.slice(0, 9).join(";;") + ";;Pending"; 
+                
+                // 4. Logika penentuan status Balas untuk Sheet Networking TETAP AMAN (Murni Queue/Stop)
                 finalAiLabel = (aiLabel.toUpperCase() === "QUEUE") ? "Queue" : "Stop"; 
+                
                 historyUpdatefix += "\n[User Kirim Gambar : " + deskripsiGambar + "]";
-
                 let extractedCaption = data.pesan || data.message_text || data.caption || data.text || data.message || "";
+                
+                // 5. Lempar data matang ke pencatat log Finance
                 logImageActivity(uniqueIdB, imagePipelineLogs.join("\n"), driveLink, aiExtractedData, finalColD, namaAkun, finalH, clientSheetId, mappedData, namaFile, extractedCaption);
             }
 
@@ -980,18 +1034,23 @@ textForFinance = String(textForFinance).trim();
         finalAiLabel = "Queue";
         finalAiLog = "Trigger Queue (Text)"; // Nilai disimpan di memori, tapi updateKolomY tetap false
 
-        // Gunakan Logika Stop (UNSUBAI / XX / WARMER) di sini
+        // Gunakan Logika Stop (UNSUBAI / XX / WARMER / STORY KOSONG)
         let limitWarmer = config.limitWarmerValue;
         let isWarmTarget = (checkLabel.includes("AE") || checkLabel.includes("AER") || checkLabel.includes("AEr"));
 
-        if (checkLabel.includes("UNSUBAI") || checkLabel.includes("XX")) {
+        // ---> SUNTIKAN BARU: Hentikan AI jika ini balasan story/gambar tanpa caption
+        if (isReplyToEmptyMedia) {
+            finalAiLabel = "Stop";
+            finalAiLog = "Trigger Stop: Reply to Empty Media/Story";
+        } 
+        else if (checkLabel.includes("UNSUBAI") || checkLabel.includes("XX")) {
             finalAiLabel = "Stop";
             finalAiLog = "Trigger Stop by Label UNSUBAI/XX"; 
         } else if (isWarmTarget && qtyOutbox > limitWarmer) {
             finalAiLabel = "Stop"; 
             finalAiLog = "Limit Warmer " + qtyOutbox + "/" + limitWarmer;
         }
-      } 
+      }
       // Jika is_me = True (Admin / Bot yang chat keluar)
       else {
         // URUTAN 4: Jika status sebelumnya "AI Reply" -> tulis "AI Reply"
@@ -1010,209 +1069,166 @@ textForFinance = String(textForFinance).trim();
     let finalZ = (finalAiLabel === "Admin Reply") ? false : true;
 
     // ====================================================================
-    // FITUR TICKET (UPDATE & CREATE) UNTUK AGEN
+    // FITUR TICKET (UPDATE & CREATE) VIA COMMAND /ticket
     // ====================================================================
-    let isTicketUpdateSuccess = false; 
-
-    // PERBAIKAN: Deklarasikan textPesan di sini agar terbaca oleh semua kode di bawahnya
     let textPesan = String(mappedData.message || "").trim();
+    let isTicketCommand = textPesan.toLowerCase().startsWith("/ticket");
 
-    // Cek SATU KALI apakah label (Kolom C) mengandung 'AGEN'
-    if (String(finalC).toUpperCase().includes("AGEN")) {
-        const sheetTicket = ss.getSheetByName("Ticket"); // Panggil sheet 1 kali saja
+    if (isTicketCommand) {
         
-        // Pastikan Sheet Ticket benar-benar ada untuk mencegah eror 'null'
+        // BLOK KODE BARU: SECURITY GATE GRUP AGEN
+        // Mencegah kebocoran data jika ada grup tanpa label AGEN yang mengetik /ticket
+        let hasAgenLabel = String(finalC).toUpperCase().includes("AGEN");
+        if (mappedData.is_group && !hasAgenLabel) {
+            // Langsung hentikan script, jangan catat ke database Networking
+            return ContentService.createTextOutput("IGNORED_UNAUTHORIZED_GROUP_TICKET");
+        }
+
+        const sheetTicket = ss.getSheetByName("Ticket"); 
+        
         if (sheetTicket) {
+            // 1. Helper parsing (Key-Value) dengan Batas Kata (\b) agar lebih presisi
+            let getVal = (key) => {
+                let regex = new RegExp("\\b" + key + "\\s*[:=]\\s*(.*)", "i");
+                let match = textPesan.match(regex);
+                return match ? match[1].trim() : "";
+            };
             
-            // A. LOGIKA UPDATE PROGRESS TICKET
-            // Format Baru: ID - Progress (opsional) - Deskripsi (opsional)
-            // Contoh 1: 2605171030 - 20% - Material sudah tiba
-            // Contoh 2: 2605171030 - Tukang mulai kerja (Progress otomatis +0.01)
-            // Contoh 3: 2605171030 - 50% (Hanya update angka)
+            let valId       = getVal("Id"); 
+            let valAkun     = getVal("Akun") || namaAkun;
+            let valIdArea   = getVal("KPI");
+            let valIdProyek = getVal("ID Proyek") || getVal("Idp");
+            let valArea     = getVal("Area") || "Task"; // Default jika kosong
+            let valProject  = getVal("Project");
+            let valProg     = getVal("Prog") || getVal("Persen");
+            
+            // BLOK KODE BARU: Penangkapan Deskripsi Multiline (Banyak Baris)
+            // Menggunakan [\s\S]* agar mampu menyedot semua baris teks di bawah perintah "Deskripsi ="
+            let valDescMatch = textPesan.match(/Deskripsi\s*[:=]\s*([\s\S]*)/i);
+            let valDesc = valDescMatch ? valDescMatch[1].trim() : "";
+            
+            let rawInputAgen = getVal("WA Agen");
+            let valAgen = "";
+            let valNamaAgen = "";
+            
+            if (rawInputAgen !== "") {
+                let cleanAgen = rawInputAgen.replace(/\D/g, "");
+                if (cleanAgen.startsWith("0")) cleanAgen = "62" + cleanAgen.substring(1);
+                else if (cleanAgen.startsWith("8")) cleanAgen = "62" + cleanAgen;
+                valAgen = cleanAgen + ".@admin" + finalColE;
+                let foundAgen = targetSheet.getRange("B:B").createTextFinder(valAgen).matchEntireCell(true).findNext();
+                if (foundAgen) {
+                    valNamaAgen = targetSheet.getRange(foundAgen.getRow(), 8).getValue(); 
+                } else {
+                    valNamaAgen = getVal("Nama Agen") || finalH;
+                }
+            } else {
+                valAgen = oldData ? oldData.uniqueId : uniqueIdB;
+                valNamaAgen = getVal("Nama Agen") || finalH;
+            }
+            
+            let isTicketUpdateSuccess = false;
+
             // ----------------------------------------------------------------
-            let parts = textPesan.split('-').map(p => p.trim());
-            
-            if (parts.length >= 1) { // Ubah menjadi minimal 1 karena hanya butuh ID untuk di cek
-                let ticketId = parts[0]; 
-                let isValidId = /^\d{10}$/.test(ticketId); // Harus pas 10 digit angka
+            // A. LOGIKA UPDATE (JIKA ID DIISI)
+            // ----------------------------------------------------------------
+            if (valId) {
+                // PERBAIKAN BUG: Gunakan Array Lookup agar tahan banting terhadap 
+                // perbedaan tipe data Angka (dari Sheet) vs String (dari WhatsApp)
+                let allIds = sheetTicket.getRange("A:A").getValues();
+                let rowToUpdate = -1;
                 
-                if (isValidId) {
-                    const lastRowTicket = sheetTicket.getLastRow();
-                    
-                    if (lastRowTicket > 1) {
-                        // Kolom A = 1 (ID Ticket)
-                        const dataIdTicket = sheetTicket.getRange(1, 1, lastRowTicket, 1).getValues();
-                        let rowToUpdate = -1;
-
-                        for (let i = 0; i < dataIdTicket.length; i++) {
-                            if (String(dataIdTicket[i][0]).trim() === ticketId) {
-                                rowToUpdate = i + 1;
-                                break;
-                            }
-                        }
-
-                        if (rowToUpdate !== -1) {
-                            // Ambil progress lama terlebih dahulu (Kolom K = 11)
-                            let existingProgress = sheetTicket.getRange(rowToUpdate, 11).getValue();
-                            let progressDecimal = parseFloat(existingProgress);
-                            if (isNaN(progressDecimal)) progressDecimal = 0;
-                            
-                            let isProgressUpdatedManually = false;
-                            let deskripsiBaru = "";
-                            let deskripsiStartIndex = 1;
-
-                            // Jika ada bagian kedua setelah ID
-                            if (parts.length > 1) {
-                                let part1 = parts[1];
-                                // Cek apakah part1 adalah persentase/angka progress
-                                let isPart1Progress = /^[\d]+%?$/.test(part1.replace(/\s/g, ''));
-
-                                if (isPart1Progress) {
-                                    isProgressUpdatedManually = true;
-                                    let rawProgress = part1.replace(/[^0-9]/g, ''); 
-                                    progressDecimal = parseInt(rawProgress) / 100;
-                                    deskripsiStartIndex = 2; // Deskripsi mulai dari part ke-3
-                                } else {
-                                    // Jika part1 BUKAN angka, berarti itu adalah Deskripsi.
-                                    // Progress lama otomatis ditambah 0.01
-                                    deskripsiStartIndex = 1;
-                                    progressDecimal += 0.01;
-                                }
-                            }
-                            
-                            // Gabungkan sisa parts menjadi deskripsi
-                            if (parts.length > deskripsiStartIndex) {
-                                deskripsiBaru = parts.slice(deskripsiStartIndex).join(' - ').trim();
-                            }
-
-                            // Pastikan progress tidak melebihi 1 (100%)
-                            if (progressDecimal > 1) progressDecimal = 1;
-
-                            // Tentukan Status Baru
-                            let statusBaru = "";
-                            if (progressDecimal >= 1) statusBaru = "Done";
-                            else if (progressDecimal > 0) statusBaru = "In Progress";
-                            else statusBaru = "Plan";
-
-                            // UPDATE 1: Update Angka Progress (Kolom 11)
-                            sheetTicket.getRange(rowToUpdate, 11).setValue(progressDecimal);
-                            
-                            // UPDATE 2: Update Status Ticket (Kolom 9)
-                            sheetTicket.getRange(rowToUpdate, 9).setValue(statusBaru);
-
-                            // UPDATE 3: Jika Done, isi waktu selesai (Kolom 19)
-                            if (statusBaru === "Done") {
-                                let tglDone = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
-                                sheetTicket.getRange(rowToUpdate, 19).setValue(tglDone); 
-                            }
-
-                            // UPDATE 4: Tambahkan Deskripsi Baru (Kolom 8)
-                            if (deskripsiBaru !== "") {
-                                let cellDeskripsi = sheetTicket.getRange(rowToUpdate, 8);
-                                let deskripsiLama = String(cellDeskripsi.getValue()).trim();
-                                let ts = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd/MM/yyyy HH:mm");
-
-                                if (deskripsiLama !== "") {
-                                    // Deskripsi baru ditaruh paling depan
-                                    let updateTeks = "[" + ts + "]\n" + deskripsiBaru + "\n\n" + deskripsiLama;
-                                    cellDeskripsi.setValue(updateTeks);
-                                } else {
-                                    cellDeskripsi.setValue("[" + ts + "]\n" + deskripsiBaru);
-                                }
-                            }
-
-                            // UPDATE 5: Atur Tanggal (Kolom 16) & Jam (Kolom 17) otomatis ke waktu sekarang + 5 Menit
-                            let currentTime = new Date();
-                            currentTime.setMinutes(currentTime.getMinutes() + 5); // Tambah 180 menit
-                            
-                            let timeZone = Session.getScriptTimeZone();
-                            let tglPlus180 = Utilities.formatDate(currentTime, timeZone, "yyyy-MM-dd");
-                            let jamPlus180 = Utilities.formatDate(currentTime, timeZone, "HH:mm:ss");
-
-                            sheetTicket.getRange(rowToUpdate, 16).setValue(tglPlus180);
-                            sheetTicket.getRange(rowToUpdate, 17).setValue(jamPlus180);
-                            sheetTicket.getRange(rowToUpdate, 10).setValue(true);
-                            
-                            isTicketUpdateSuccess = true; // Tandai update sukses agar tidak menjalankan fungsi Create
-                        }
+                for (let i = 0; i < allIds.length; i++) {
+                    if (String(allIds[i][0]).trim() === String(valId).trim()) {
+                        rowToUpdate = i + 1;
+                        break;
                     }
+                }
+                
+                if (rowToUpdate !== -1) {
+                    // 1. READ: Baca baris utuh secara massal
+                    let existingRow = sheetTicket.getRange(rowToUpdate, 1, 1, 20).getValues()[0];
+                    
+                    // 2. LOGIKA PEMROSESAN DATA
+                    let existingProgress = existingRow[10]; // Kolom K
+                    let progDec = parseFloat(existingProgress) || 0;
+                    if (valProg) {
+                        progDec = parseFloat(valProg.replace(/[^\d]/g, '')) / 100;
+                    } else {
+                        progDec += 0.01; 
+                    }
+                    if (progDec > 1) progDec = 1;
+                    
+                    let statusBaru = progDec >= 1 ? "Done" : (progDec > 0 ? "In Progress" : "Plan");
+                    
+                    // Deskripsi Multiline Baru Disisipkan di atas (Prepend)
+                    let updateTeks = existingRow[7]; 
+                    if (valDesc !== "") {
+                        let oldDesc = String(existingRow[7]).trim();
+                        let ts = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd/MM/yyyy HH:mm");
+                        updateTeks = "[" + ts + "]\n" + valDesc + (oldDesc !== "" ? "\n\n" + oldDesc : "");
+                    }
+                    
+                    let ct = new Date();
+                    ct.setMinutes(ct.getMinutes() + 5);
+                    let tglUpdate = Utilities.formatDate(ct, Session.getScriptTimeZone(), "yyyy-MM-dd");
+                    let jamUpdate = Utilities.formatDate(ct, Session.getScriptTimeZone(), "HH:mm:ss");
+                    let waktuSelesai = (statusBaru === "Done") ? Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss") : "";
+
+                    // 3. WRITE: Penulisan "Sparse Batch" (Melompati formula di Kolom F, L, R)
+                    
+                    let b = valAkun || existingRow[1];
+                    let c = valIdArea || existingRow[2];
+                    let d = valIdProyek || existingRow[3];
+                    let e = (valArea !== "Task") ? valArea : existingRow[4];
+                    sheetTicket.getRange(rowToUpdate, 2, 1, 4).setValues([[b, c, d, e]]); // Blok Akun s/d Area
+                    
+                    let g = valProject || existingRow[6];
+                    sheetTicket.getRange(rowToUpdate, 7, 1, 5).setValues([[g, updateTeks, statusBaru, true, progDec]]); // Blok Project s/d Prog Task
+                    
+                    sheetTicket.getRange(rowToUpdate, 16, 1, 2).setValues([[tglUpdate, jamUpdate]]); // Blok P - Q
+                    sheetTicket.getRange(rowToUpdate, 19).setValue(waktuSelesai); // Blok S (Aman melompati R)
+                    
+                    isTicketUpdateSuccess = true;
                 }
             }
 
             // ----------------------------------------------------------------
-            // B. LOGIKA CREATE TICKET BARU (Hanya jalan jika BUKAN update)
+            // B. LOGIKA CREATE BARU (JIKA ID KOSONG / TIKET TIDAK DITEMUKAN)
             // ----------------------------------------------------------------
             if (!isTicketUpdateSuccess) {
-                let regexCreateTicket = /^(🆕|✅)(?:(\d{4}))?(?:-(\d{2}:\d{2}))?-(.+?)(?:-(.+))?$/is;
-                let matchTicket = textPesan.match(regexCreateTicket);
-
-                if (matchTicket) {
-                    let emojiStart = matchTicket[1];      
-                    let tanggalInput = matchTicket[2]; 
-                    let waktuInput = matchTicket[3];
-                    let deskripsiProject = matchTicket[4] ? matchTicket[4].trim() : ""; 
-                    let catatanTicket = matchTicket[5] ? matchTicket[5].trim() : ""; 
-                    
-                    let sekarang = new Date();
-                    let timeZone = Session.getScriptTimeZone();
-                    
-                    let randomTicketId = Utilities.formatDate(sekarang, timeZone, "yyMMddHHmm");
-                    let akunTicket = (emojiStart === "🆕" || emojiStart === "✅") ? "👷 NusaArtCon" : "Personal";
-                    let tglCreateAt = Utilities.formatDate(sekarang, timeZone, "yyyy-MM-dd HH:mm:ss");
-                    
-                    // PERBAIKAN: Panjang array diubah menjadi 21 (index 0 - 20) agar muat finalH
-                    let newTicketRow = new Array(21).fill("");
-                    newTicketRow[0] = randomTicketId;     
-                    newTicketRow[1] = akunTicket;
-                    newTicketRow[4] = "Task";                   
-                    newTicketRow[6] = deskripsiProject;   
-                    newTicketRow[7] = catatanTicket;      
-                    newTicketRow[13] = tglCreateAt;       
-                    
-                    // ========================================================
-                    // PERBAIKAN DISINI: Kolom T diisi Value Kolom B Sheet Networking
-                    // ========================================================
-                    // Jika data customer sudah ada di Networking, ambil nilai uniknya. 
-                    // Jika belum ada, gunakan uniqueIdB pembentukan awal.
-                    let valueKolomB = oldData ? oldData.uniqueId : uniqueIdB;
-                    
-                    newTicketRow[19] = valueKolomB; 
-                    newTicketRow[20] = finalH;           
-                    
-                    if (tanggalInput && tanggalInput.length === 4) {
-                        let day = tanggalInput.substring(0, 2);
-                        let month = tanggalInput.substring(2, 4);
-                        let year = sekarang.getFullYear();
-                        
-                        newTicketRow[15] = `${year}-${month}-${day}`;
-                        newTicketRow[16] = waktuInput ? waktuInput + ":00" : "09:00:00";
-
-                        if (emojiStart === "✅") {
-                            newTicketRow[8] = "Done";
-                            newTicketRow[10] = 1;
-                        } else {
-                            newTicketRow[8] = "In Progress";
-                            newTicketRow[10] = 0.01;
-                        }
-                    } else {
-                        newTicketRow[15] = Utilities.formatDate(sekarang, timeZone, "yyyy-MM-dd");
-                        newTicketRow[16] = Utilities.formatDate(sekarang, timeZone, "HH:mm:ss");
-
-                    if (emojiStart === "✅") {
-                            newTicketRow[8] = "Done";
-                            newTicketRow[10] = 1;
-                        } else {
-                            newTicketRow[8] = "In Progress";
-                            newTicketRow[10] = 0.01;
-                        }
-                    }
-                    
-                    newTicketRow[9] = true;
-                    
-                    if (deskripsiProject !== "") {
-                        sheetTicket.appendRow(newTicketRow);
-                    }
+                let sekarang = new Date();
+                let tz = Session.getScriptTimeZone();
+                let randomTicketId = Utilities.formatDate(sekarang, tz, "yyMMddHHmm");
+                
+                // BLOK KODE BARU: Default 1% (0.01) jika dikosongkan. Jika eksplisit "0" atau "0%", tetap jadi 0.
+                let progDec = 0.01; 
+                if (valProg !== "") {
+                    progDec = parseFloat(valProg.replace(/[^\d]/g, '')) / 100;
+                    if (isNaN(progDec)) progDec = 0; // Pengaman jika isi teks tidak valid
                 }
+                let statusBaru = progDec >= 1 ? "Done" : (progDec > 0 ? "In Progress" : "Plan");
+
+                let newRow = new Array(30).fill("");
+                newRow[0] = randomTicketId;     // Kolom A: ID Ticket
+                newRow[1] = valAkun;            // Kolom B: Akun
+                newRow[2] = valIdArea;          // Kolom C: ID Area
+                newRow[3] = valIdProyek;        // Kolom D: ID Proyek
+                newRow[4] = valArea;            // Kolom E: Area
+                newRow[6] = valProject;         // Kolom G: Project
+                newRow[7] = valDesc;            // Kolom H: Deskripsi
+                newRow[8] = statusBaru;         // Kolom I: Priority / Status
+                newRow[9] = true;               // Kolom J
+                newRow[10] = progDec;           // Kolom K: Prog Task
+                
+                newRow[13] = Utilities.formatDate(sekarang, tz, "yyyy-MM-dd HH:mm:ss"); // Kolom N (Tgl Create)
+                newRow[15] = Utilities.formatDate(sekarang, tz, "yyyy-MM-dd");          // Kolom P (Tgl Update)
+                newRow[16] = Utilities.formatDate(sekarang, tz, "HH:mm:ss");            // Kolom Q (Jam Update)
+                
+                newRow[19] = valAgen;           // Kolom T: Agen (ID Network)
+                newRow[20] = valNamaAgen;       // Kolom U: Nama Agen
+                
+                sheetTicket.appendRow(newRow);
             }
 
             // ========================================================
@@ -1231,16 +1247,16 @@ textForFinance = String(textForFinance).trim();
             } catch(err) {
               Logger.log("Gagal menjalankan eksekusi langsung syncTasks: " + err.message);
             }
-            // ========================================================
-            
+
+            // HENTIKAN PROSES AI AGAR TIDAK MEMBALAS COMMAND INI
+            finalAiLabel = mappedData.is_me ? "Admin Reply" : "Stop"; 
+            finalAiLog = "Processed Command /ticket";
+            updateKolomY = true;
         }
     }
-    // ====================================================================
-    // 7. WRITING DATA
-    // ====================================================================
 
     // ====================================================================
-    // MODIFIKASI: PISAHKAN WAKTU CHAT MASUK & KELUAR
+    // 7. WRITING DATA
     // ====================================================================
     let waktuMasukTerakhir = "";
     let waktuKeluarTerakhir = "";

@@ -277,6 +277,9 @@
                     </svg>
                 </div>
             </div>
+            <button id="btn-duplicate-net-warning" onclick="toggleDuplicateNetFilter()" class="hidden w-full mt-3 bg-red-500 hover:bg-red-600 text-white px-2.5 py-2 rounded-full text-[11px] items-center justify-center gap-1 transition-colors shadow-sm font-bold animate-pulse">
+                ⚠️ <span id="duplicate-net-count-text">0 Data Ganda Ditemukan</span>
+            </button>
         </div>
 
         <!-- HAPUS 2 DIV LAMA DI BAWAH INI JIKA MASIH ADA DI KODEMU: -->
@@ -338,6 +341,12 @@
                 </div>
 
             </div>
+        </div>
+
+        <!-- BLOK KODE BARU: PINNED MESSAGE DEVICE INFO -->
+        <div id="pinned-msg-container" class="hidden bg-[#f0f2f5] border-b border-gray-200 px-3 py-2 flex items-center gap-2 shadow-sm z-10 cursor-pointer hover:bg-gray-200 transition-colors" onclick="showSingleDeviceTooltip()">
+            <svg width="14" height="14" fill="#667781" viewBox="0 0 16 16" class="shrink-0"><path d="M4.146.146A.5.5 0 0 1 4.5 0h7a.5.5 0 0 1 .5.5c0 .68-.59 1.9-1.118 2.659-.187.267-.373.477-.5.6v4.841l.277.277a.5.5 0 0 1 .141.354v.5a.5.5 0 0 1-.5.5h-2v4.5a.5.5 0 0 1-1 0v-4.5h-2a.5.5 0 0 1-.5.5v-.5a.5.5 0 0 1 .141-.354l.277-.277V3.759c-.127-.123-.313-.333-.5-.6C4.59 2.4 4 1.18 4 .5a.5.5 0 0 1 .146-.354z"/></svg>
+            <div class="flex-1 truncate text-[11px] sm:text-[12px] text-gray-700 font-medium" id="pinned-msg-text"></div>
         </div>
 
         <div id="chat-window" class="flex-1 overflow-y-auto p-3 flex flex-col space-y-1">
@@ -421,6 +430,16 @@
     let filterUnsubOnly = false;
     let filterBelumBalasOnly = false;
     let filterPendingOnly = false;
+    let currentActiveDeviceSetting = null; // <-- TAMBAHKAN BARIS INI
+
+    // --- BLOK KODE BARU: State Duplikat Networking ---
+    let showDuplicateNetOnly = false;
+    let duplicateNetIds = new Set();
+    
+    function toggleDuplicateNetFilter() {
+        showDuplicateNetOnly = !showDuplicateNetOnly;
+        renderSidebar();
+    }
 
     // --- VARIABEL LOGIN SISTEM ---
     let loggedInUser = null;
@@ -483,6 +502,7 @@
                 document.getElementById('login-modal').classList.add('hidden');
                 showToast("Login Berhasil!");
                 
+                // blok kode baru
                 if(!isMasterAdmin) {
                     const btnSetting = document.getElementById('btn-setting-system');
                     if(btnSetting) btnSetting.classList.add('hidden');
@@ -490,6 +510,7 @@
                 
                 fetchData();
                 fetchAIToken();
+                fetchSilentDeviceCache(); // <--- BARU: Tarik data device di background saat baru login
                 setInterval(fetchData, 15000); 
                 setInterval(fetchAIToken, 60000);
             } else {
@@ -600,6 +621,7 @@ function hideGlobalLoading() {
         // ... (Kode google.script.run.withSuccessHandler tetap sama seperti milik Anda) ...
         google.script.run
             .withSuccessHandler(function(data) {
+              globalBankContentCache = data.bankContent || [];
                 if (!data || typeof data !== 'object') { showToast("Data Corrupt!"); closeConfigModal(); return; }
                 if(document.getElementById('webhook-url-display')) {
                     document.getElementById('webhook-url-display').value = data.webhookUrl || "A2 Kosong / URL belum dideteksi";
@@ -1066,6 +1088,116 @@ function hideGlobalLoading() {
         document.getElementById('global-tooltip-modal').classList.remove('hidden');
     }
 
+    // --- BLOK KODE BARU: RENDER KARTU MANAJEMEN DEVICE DI TOOLTIP ---
+    function showSingleDeviceTooltip() {
+        if (!currentActiveDeviceSetting || !currentActiveDeviceSetting.fullRow) return;
+        
+        const row = currentActiveDeviceSetting.fullRow;
+        
+        // Helper Deteksi Expired
+        function isExpired(dateStr) {
+            if (!dateStr || dateStr.trim() === "" || dateStr === "-") return false; 
+            const parts = dateStr.split('/');
+            if (parts.length !== 3) return false;
+            const monthMap = { 'Jan':0, 'Feb':1, 'Mar':2, 'Apr':3, 'Mei':4, 'Jun':5, 'Jul':6, 'Ags':7, 'Sep':8, 'Okt':9, 'Nov':10, 'Des':11, 'Aug':7, 'Dec':11 };
+            const day = parseInt(parts[0], 10);
+            const month = monthMap[parts[1].substring(0, 3)] !== undefined ? monthMap[parts[1].substring(0, 3)] : -1;
+            const year = parseInt(parts[2], 10) + 2000;
+            if (month === -1) return false;
+            const expDate = new Date(year, month, day);
+            const today = new Date();
+            today.setHours(0,0,0,0); expDate.setHours(0,0,0,0);
+            return expDate < today; 
+        }
+
+        const devName = String(row[0] || "-");      
+        const rasioCatatan = String(row[3] || "-"); 
+        const statusRun = String(row[5] || "Stop"); 
+        const koneksiApi = String(row[15] || "-");  
+        const inVal = String(row[16] || "0");       
+        const outVal = String(row[17] || "0%");     
+        const qtInVal = String(row[18] || "0");     
+        const qtOutVal = String(row[19] || "0%");   
+        const qtyAer = String(row[20] || "0");      
+        const dbKontak = String(row[22] || "0");    
+        const masaAktifRaw = String(row[24] || "-");
+        
+        const isAlertMasaAktif = masaAktifRaw.toUpperCase().includes("HANGUS") || isExpired(masaAktifRaw);
+        const masaAktifColor = isAlertMasaAktif ? "text-red-600 animate-pulse font-extrabold" : "text-gray-800 font-bold";
+
+        const isKoneksi = koneksiApi.toLowerCase().includes("terkoneksi");
+        const apiBadge = isKoneksi 
+            ? `<span class="text-green-700 bg-green-100 border border-green-200 px-2 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide">Terkoneksi</span>` 
+            : `<span class="text-red-700 bg-red-100 border border-red-200 px-2 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide">${koneksiApi || 'Terputus'}</span>`;
+        
+        const topBorderColor = isKoneksi ? "bg-green-400" : "bg-red-400";
+        
+        const cardHtml = `
+            <div class="flex flex-col p-2.5 border border-gray-200 rounded-xl bg-white relative overflow-hidden text-left mt-2 shadow-sm">
+                <div class="absolute top-0 left-0 w-full h-1 ${topBorderColor}"></div>
+                <div class="border-b border-gray-100 pb-2 mt-1 flex justify-between items-start">
+                    <h4 class="font-extrabold text-[13px] text-gray-800 truncate tracking-tight pt-1">💻 ${devName}</h4>
+                    
+                    <!-- [PERBAIKAN] Tombol Edit Device untuk open dari Tooltips -->
+                    <button onclick="closeTooltip(); editDevForm(${currentActiveDeviceSetting.index})" class="p-1.5 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white border border-blue-100 rounded-md transition-all shadow-sm flex items-center justify-center" title="Edit Pengaturan">
+                        <svg width="11" height="11" fill="currentColor" viewBox="0 0 16 16"><path d="M12.854.146a.5.5 0 0 0-.707 0L10.5 1.793 14.207 5.5l1.647-1.646a.5.5 0 0 0 0-.708l-3-3zm.646 6.061L9.793 2.5 3.293 9H3.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.207l6.5-6.5zm-7.468 7.468A.5.5 0 0 1 6 13.5V13h-.5a.5.5 0 0 1-.5-.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.5-.5V10h-.5a.499.499 0 0 1-.175-.032l-.179.178a.5.5 0 0 0-.11.168l-2 5a.5.5 0 0 0 .65.65l5-2a.5.5 0 0 0 .168-.11l.178-.178z"/></svg>
+                    </button>
+                </div>
+                <div class="grid grid-cols-2 gap-y-3 gap-x-2 flex-1 mt-3">
+                    <div class="flex flex-col gap-0.5">
+                        <span class="text-[8px] text-gray-400 font-bold uppercase tracking-wider">Koneksi API</span>
+                        <div class="flex items-center">${apiBadge}</div>
+                    </div>
+                    <div class="flex flex-col gap-0.5">
+                        <span class="text-[8px] text-gray-400 font-bold uppercase tracking-wider">Status Send</span>
+                        <span class="text-[12px] font-extrabold ${statusRun.toLowerCase().includes('run') ? 'text-[#008069]' : 'text-red-600'}">${statusRun}</span>
+                    </div>
+                    <div class="col-span-2 bg-yellow-50/40 border border-yellow-100 rounded px-2 py-2 flex flex-col gap-0.5">
+                        <span class="text-[8px] text-yellow-700 font-bold uppercase tracking-wider">Catatan Sistem</span>
+                        <span class="text-[10.5px] text-gray-700 italic leading-snug">${rasioCatatan}</span>
+                    </div>
+                    <div class="flex flex-col gap-0.5">
+                        <span class="text-[8px] text-gray-400 font-bold uppercase tracking-wider">Ratio 1d</span>
+                        <span class="text-[12px] font-bold text-gray-700">${outVal} <span class="text-[9px] text-gray-500 font-normal">(${inVal})</span></span>
+                    </div>
+                    <div class="flex flex-col gap-0.5">
+                        <span class="text-[8px] text-gray-400 font-bold uppercase tracking-wider">Ratio 30d</span>
+                        <span class="text-[12px] font-bold text-gray-700">${qtOutVal} <span class="text-[9px] text-gray-500 font-normal">(${qtInVal})</span></span>
+                    </div>
+                    <div class="flex flex-col gap-0.5">
+                        <span class="text-[8px] text-gray-400 font-bold uppercase tracking-wider">Qty AEr</span>
+                        <span class="text-[12px] font-bold text-gray-700">${qtyAer}</span>
+                    </div>
+                    <div class="flex flex-col gap-0.5">
+                        <span class="text-[8px] text-gray-400 font-bold uppercase tracking-wider">DB Kontak</span>
+                        <span class="text-[12px] font-bold text-gray-700">${dbKontak}</span>
+                    </div>
+                    <div class="col-span-2 mt-1 bg-gray-50 border-gray-100 p-2 rounded-lg border flex items-center justify-between">
+                        <span class="text-[8px] text-gray-500 font-bold uppercase tracking-wider">Masa Aktif</span>
+                        <span class="text-[11px] ${masaAktifColor}">${masaAktifRaw}</span>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        showTooltip("Status Manajemen Device", cardHtml);
+    }
+
+    // BLOK KODE BARU: Rute Fungsi Edit dari Tooltip ke Form
+    function openEditActiveDevice() {
+        if (!currentActiveDeviceSetting) return;
+        
+        // Cari posisi index array device saat ini di memori RAM browser
+        const idx = deviceCache.findIndex(d => d.providerId === currentActiveDeviceSetting.providerId);
+        
+        if (idx !== -1) {
+            closeTooltip();       // Tutup tooltip melayang
+            editDevForm(idx);     // Buka modal edit form device
+        } else {
+            showToast("⚠️ Device tidak ditemukan di data cache!");
+        }
+    }
+
     function closeTooltip() {
         document.getElementById('global-tooltip-modal').classList.add('hidden');
     }
@@ -1098,10 +1230,13 @@ function hideGlobalLoading() {
         setVal('dev-col-23', rowData[23] || "WA Biasa"); 
         setVal('dev-col-24', parseDateForInput(rowData[24])); 
         setVal('dev-col-25', rowData[25] || ""); // <--- Ini membaca Kolom Z (Set Rasio)
+        setVal('dev-col-27', rowData[27] || ""); // BLOK KODE BARU: Kolom AB (Rekening)
+        setVal('dev-col-28', rowData[28] || ""); // BLOK KODE BARU: Kolom AC (Logo)
         
         togglePrefixUrlVisibility();
         
         // MUNCULKAN DULU MODALNYA
+        currentBankContentAkun = String(rowData[1] || "").trim(); renderBankContentUI();
         document.getElementById('dev-modal').classList.remove('hidden');
         
         // SETELAH MODAL MUNCUL, KALKULASI TINGGI TEXTAREA
@@ -1148,7 +1283,7 @@ function hideGlobalLoading() {
             col0: col0Val,
             col1: col1Val,
             col2: getVal('dev-col-2'),
-            col4: getVal('dev-col-4'), // <--- Ini akan menjadi Auto Label di Kolom E
+            col4: getVal('dev-col-4'), 
             col6: col6Val,
             col7: getVal('dev-col-7'),
             col8: getVal('dev-col-8'),
@@ -1156,10 +1291,12 @@ function hideGlobalLoading() {
             col10: getVal('dev-col-10'),
             col11: getVal('dev-col-11'),
             col12: getVal('dev-col-12'),
-            col13: getVal('dev-col-13'), // <--- Kolom N promt vision
+            col13: getVal('dev-col-13'), 
             col23: getVal('dev-col-23'),
             col24: formattedDate,
-            col25: getVal('dev-col-25') // <--- Set Rasio di Kolom Z
+            col25: getVal('dev-col-25'),
+            col27: getVal('dev-col-27'), // BLOK KODE BARU (Kirim Rekening)
+            col28: getVal('dev-col-28')  // BLOK KODE BARU (Kirim Logo)
         };
         
         // 4. KIRIM KE BACKEND MASTER
@@ -1446,115 +1583,107 @@ function getAvatarColorClass(isMe, waLabel) {
         return "Default";
     }
 
-// 1. TIMPA FUNGSI getDeviceStats
-    function getDeviceStats(deviceName) {
-        const contactIds = new Set();
-        let alertCount = 0;
-        let deviceTotalDb = "0"; 
-        let koneksiStatus = ""; 
-        let isDeviceUnknown = true; // Default true
-        let isApiKeyEmpty = true; // Default true untuk cek API Key
-        
-        const contactMap = new Map();
-        
-        allData.forEach(row => {
-            const id = row[1]; 
-            if (!contactMap.has(id)) {
-                const labelWA = String(row[2] || "");
-                const isUnsubAI = labelWA.replace(/\s+/g, '').toUpperCase().includes("UNSUBAI");
-                const rawVal = row[25]; 
-                const isUnread = rawVal === true || String(rawVal).toLowerCase().trim() === "true" || String(rawVal).toLowerCase().trim() === "benar";
-                
-                contactMap.set(id, {
-                    device: String(row[3] || "Default").trim(), 
-                    isMe: String(row[13]).toLowerCase().trim() === "true",
-                    waLabel: labelWA.trim(),
-                    unsub: isUnsubAI,
-                    isUnread: isUnread
-                });
-            }
-        });
-        
-        contactMap.forEach((c, id) => {
-            const matchDevice = (deviceName === "Semua" || c.device === deviceName);
-            const matchUnsub = !filterUnsubOnly || c.unsub;
-            const matchBelumBalas = !filterBelumBalasOnly || !c.isMe;
-            const matchUnread = !filterUnreadOnly || c.isUnread;
-            if (matchDevice && matchUnsub && matchBelumBalas && matchUnread) {
-                contactIds.add(id);
-                const labelsArray = (c.waLabel || "").toUpperCase().split(',').map(l => l.trim());
-                if (!c.isMe && !labelsArray.includes('AE')) alertCount++;
-            }
-        });
-        
-        if (deviceName !== "Semua") {
-            const devSetting = deviceCache.find(d => String(d.providerId).trim() === deviceName);
-            if (devSetting && devSetting.fullRow) {
-                isDeviceUnknown = false;
-                deviceTotalDb = String(devSetting.fullRow[22] || "0").trim(); // Kolom W (DB Kontak)
-                koneksiStatus = String(devSetting.fullRow[15] || "").toLowerCase().trim(); // Kolom P (Status API)
-                
-                // Cek API Key di Kolom I (Index 8)
-                const apiKey = String(devSetting.fullRow[8] || "").trim();
-                if (apiKey !== "") {
-                    isApiKeyEmpty = false;
-                }
-            }
-        } else {
-            isDeviceUnknown = false;
-        }
-        
-        return { 
-            count: contactIds.size, 
-            alerts: alertCount, 
-            totalDb: deviceTotalDb,
-            statusApi: koneksiStatus,
-            isUnknown: isDeviceUnknown,
-            isKeyEmpty: isApiKeyEmpty
-        };
-    }
+    // =====================================================================
+// FUNGSI updateDeviceFilter (DIOPTIMASI: Single-Pass Aggregation)
+// Meniadakan fungsi getDeviceStats agar tidak N+1 looping
+// =====================================================================
+function updateDeviceFilter() {
+    const select = document.getElementById('device-select');
+    const oldVal = select.value;
 
-    // 2. TIMPA FUNGSI updateDeviceFilter
-    function updateDeviceFilter() {
-        const select = document.getElementById('device-select');
-        const devices = new Set();
-        
-        allData.forEach(row => {
-            const device = String(row[3] || "").trim(); 
-            if (device && device.toLowerCase() !== 'default') devices.add(device);
-        });
-        
-        const sortedDevices = Array.from(devices).sort();
-        const oldVal = select.value;
-        const statsSemua = getDeviceStats("Semua");
-        
-        select.innerHTML = `<option value="Semua">Semua Perangkat (${statsSemua.count})</option>`;
-        
-        sortedDevices.forEach(dev => {
-            const stats = getDeviceStats(dev);
-            const opt = document.createElement('option');
-            opt.value = dev;
-            
-            let colorCircle = '⚫'; // Default Hitam
-            
-            if (!stats.isUnknown) {
-                if (stats.isKeyEmpty) {
-                    colorCircle = '⚫'; // Hitam jika API Key kosong
-                } else if (stats.statusApi.includes('terkoneksi')) {
-                    colorCircle = '🟢'; // Hijau jika Terkoneksi
-                } else if (stats.statusApi.includes('terputus') || stats.statusApi !== "") {
-                    colorCircle = '🔴'; // Merah jika Terputus
-                }
-            }
-            
-            opt.innerText = `${colorCircle} ${dev} (${stats.count}/${stats.totalDb})`;
-            select.appendChild(opt);
-        });
-        
-        if (Array.from(select.options).some(o => o.value === oldVal)) {
-            select.value = oldVal;
+    // 1. Single Pass: Grouping Data Kontak Unik
+    const contactMap = new Map();
+    allData.forEach(row => {
+        const id = row[1];
+        if (!contactMap.has(id)) {
+            const labelWA = String(row[2] || "");
+            const isUnsubAI = labelWA.replace(/\s+/g, '').toUpperCase().includes("UNSUBAI");
+            const rawVal = row[25];
+            const isUnread = rawVal === true || String(rawVal).toLowerCase().trim() === "true" || String(rawVal).toLowerCase().trim() === "benar";
+
+            contactMap.set(id, {
+                device: String(row[3] || "Default").trim(),
+                isMe: String(row[13]).toLowerCase().trim() === "true",
+                waLabel: labelWA.trim(),
+                unsub: isUnsubAI,
+                isUnread: isUnread
+            });
         }
+    });
+
+    // 2. Single Pass: Hitung Statistik Semua & Per Device sekaligus
+    let countSemua = 0;
+    const deviceStats = {};
+
+    contactMap.forEach((c, id) => {
+        const dev = c.device;
+        
+        // Inisialisasi object untuk device ini jika belum tercatat
+        if (dev && dev.toLowerCase() !== 'default' && !deviceStats[dev]) {
+            deviceStats[dev] = { count: 0 };
+        }
+
+        // Terapkan toggle filter dari UI
+        const matchUnsub = !filterUnsubOnly || c.unsub;
+        const matchBelumBalas = !filterBelumBalasOnly || !c.isMe;
+        const matchUnread = !filterUnreadOnly || c.isUnread;
+
+        // Jika lolos semua filter, tambahkan hitungan
+        if (matchUnsub && matchBelumBalas && matchUnread) {
+            countSemua++; // Hitungan untuk opsi "Semua"
+            if (dev && dev.toLowerCase() !== 'default') {
+                deviceStats[dev].count++; // Hitungan untuk spesifik device
+            }
+        }
+    });
+
+    // 3. Render Pilihan Dropdown
+    select.innerHTML = `<option value="Semua">Semua Perangkat (${countSemua})</option>`;
+
+    // Sortir urutan device A-Z
+    const sortedDevices = Object.keys(deviceStats).sort();
+
+    sortedDevices.forEach(dev => {
+        let count = deviceStats[dev].count;
+        let deviceTotalDb = "0";
+        let koneksiStatus = "";
+        let isDeviceUnknown = true;
+        let isApiKeyEmpty = true;
+        let colorCircle = '⚫'; // Default
+
+        // Tarik detail tambahan dari cache (Data Spreadsheet Setting)
+        const devSetting = deviceCache.find(d => String(d.providerId).trim() === dev);
+        if (devSetting && devSetting.fullRow) {
+            isDeviceUnknown = false;
+            deviceTotalDb = String(devSetting.fullRow[22] || "0").trim(); // Kolom W (DB)
+            koneksiStatus = String(devSetting.fullRow[15] || "").toLowerCase().trim(); // Kolom P (Status)
+            
+            const apiKey = String(devSetting.fullRow[8] || "").trim(); // Kolom I (API Key)
+            if (apiKey !== "") isApiKeyEmpty = false;
+        }
+
+        // Status Visual Dot Indicator
+        if (!isDeviceUnknown) {
+            if (isApiKeyEmpty) {
+                colorCircle = '⚫';
+            } else if (koneksiStatus.includes('terkoneksi')) {
+                colorCircle = '🟢';
+            } else if (koneksiStatus.includes('terputus') || koneksiStatus !== "") {
+                colorCircle = '🔴';
+            }
+        }
+
+        const opt = document.createElement('option');
+        opt.value = dev;
+        opt.innerText = `${colorCircle} ${dev} (${count}/${deviceTotalDb})`;
+        select.appendChild(opt);
+    });
+
+    // Kembalikan pilihan user sebelumnya jika tidak ter-reset
+    if (Array.from(select.options).some(o => o.value === oldVal)) {
+        select.value = oldVal;
     }
+}
     
     // 3. TIMPA FUNGSI updateLabelFilter
     function updateLabelFilter() {
@@ -1623,45 +1752,131 @@ function getAvatarColorClass(isMe, waLabel) {
             return new Date(t).getTime() || 0;
         }
 
+        // ==========================================
+        // BLOK KODE BARU: DETEKSI DUPLIKAT NETWORKING
+        // ==========================================
+        let idCounts = {};
         allData.forEach(row => {
             const id = row[1];
-            if (!contactMap.has(id)) {
-                const history = (row[19] || "").split(/(?:^|\n)_\n/).filter(m => m.trim());
-                const lastMsgRaw = history.length > 0 ? history[history.length - 1] : "...";
-                const lastLines = lastMsgRaw.split('\n');
-                
-                const labelWA = String(row[2] || "");
-                const isUnsubAI = labelWA.replace(/\s+/g, '').toUpperCase().includes("UNSUBAI");
-                const rawVal = row[25];
-                const isUnread = rawVal === true || String(rawVal).toLowerCase().trim() === "true" || String(rawVal).toLowerCase().trim() === "benar";
-
-                const timeP = row[15] || ""; 
-                const timeQ = row[16] || ""; 
-                
-                const parsedP = parseTime(timeP);
-                const parsedQ = parseTime(timeQ);
-                
-                const maxTimeVal = Math.max(parsedP, parsedQ);
-                const displayTime = maxTimeVal === parsedP ? timeP : timeQ;
-
-                contactMap.set(id, {
-                    id: id, 
-                    name: row[7] || id,
-                    isMe: String(row[13]).toLowerCase().trim() === "true",
-                    time: displayTime, 
-                    timeVal: maxTimeVal, 
-                    waLabel: labelWA,
-                    unsub: isUnsubAI, 
-                    // PERBAIKAN: Langsung tembak Kolom D (Index 3)
-                    device: String(row[3] || "Default").trim(), 
-                    biodata: String(row[9] || ""), // <--- BARU: Ambil Kolom J
-                    lastMsg: lastLines.length > 1 ? lastLines.slice(1).join(' ').trim() : lastMsgRaw,
-                    isUnread: isUnread
-                });
+            if (id && id !== 'Unique ID') {
+                idCounts[id] = (idCounts[id] || 0) + 1;
             }
         });
         
-        const contacts = Array.from(contactMap.values()).filter(c => {
+        duplicateNetIds.clear();
+        let totalDuplicateRows = 0;
+        for (let id in idCounts) {
+            if (idCounts[id] > 1) {
+                duplicateNetIds.add(id);
+                totalDuplicateRows += idCounts[id];
+            }
+        }
+
+        const btnDupNet = document.getElementById('btn-duplicate-net-warning');
+        if (btnDupNet) {
+            if (duplicateNetIds.size > 0) {
+                btnDupNet.classList.remove('hidden');
+                btnDupNet.classList.add('flex');
+                document.getElementById('duplicate-net-count-text').innerText = totalDuplicateRows + " Data Ganda (Klik u/ Lihat)";
+                
+                if (showDuplicateNetOnly) {
+                    btnDupNet.classList.replace('bg-red-500', 'bg-yellow-500');
+                    btnDupNet.classList.replace('hover:bg-red-600', 'hover:bg-yellow-600');
+                    btnDupNet.classList.remove('animate-pulse');
+                    document.getElementById('duplicate-net-count-text').innerText = "Tutup Filter Duplikat";
+                } else {
+                    btnDupNet.classList.replace('bg-yellow-500', 'bg-red-500');
+                    btnDupNet.classList.replace('hover:bg-yellow-600', 'hover:bg-red-600');
+                    btnDupNet.classList.add('animate-pulse');
+                }
+            } else {
+                btnDupNet.classList.add('hidden');
+                btnDupNet.classList.remove('flex');
+                showDuplicateNetOnly = false;
+            }
+        }
+        // ==========================================
+
+        let contactsArray = [];
+
+        if (showDuplicateNetOnly) {
+            // MODE DUPLIKAT: Render semua data yang ganda tanpa disembunyikan
+            allData.forEach((row, index) => {
+                const id = row[1];
+                if (duplicateNetIds.has(id)) {
+                    const history = (row[19] || "").split(/(?:^|\n)_\n/).filter(m => m.trim());
+                    const lastMsgRaw = history.length > 0 ? history[history.length - 1] : "...";
+                    const lastLines = lastMsgRaw.split('\n');
+                    
+                    const labelWA = String(row[2] || "");
+                    const isUnsubAI = labelWA.replace(/\s+/g, '').toUpperCase().includes("UNSUBAI");
+                    const rawVal = row[25];
+                    const isUnread = rawVal === true || String(rawVal).toLowerCase().trim() === "true" || String(rawVal).toLowerCase().trim() === "benar";
+
+                    const timeP = row[15] || ""; 
+                    const timeQ = row[16] || ""; 
+                    const parsedP = parseTime(timeP);
+                    const parsedQ = parseTime(timeQ);
+                    const maxTimeVal = Math.max(parsedP, parsedQ);
+                    const displayTime = maxTimeVal === parsedP ? timeP : timeQ;
+
+                    contactsArray.push({
+                        id: id, 
+                        name: row[7] || id,
+                        isMe: String(row[13]).toLowerCase().trim() === "true",
+                        time: displayTime, 
+                        timeVal: maxTimeVal, 
+                        waLabel: labelWA,
+                        unsub: isUnsubAI, 
+                        device: String(row[3] || "Default").trim(), 
+                        biodata: String(row[9] || ""),
+                        lastMsg: lastLines.length > 1 ? lastLines.slice(1).join(' ').trim() : lastMsgRaw,
+                        isUnread: isUnread
+                    });
+                }
+            });
+        } else {
+            // MODE NORMAL: Sembunyikan duplikat dengan Map()
+            allData.forEach(row => {
+                const id = row[1];
+                if (!contactMap.has(id)) {
+                    const history = (row[19] || "").split(/(?:^|\n)_\n/).filter(m => m.trim());
+                    const lastMsgRaw = history.length > 0 ? history[history.length - 1] : "...";
+                    const lastLines = lastMsgRaw.split('\n');
+                    
+                    const labelWA = String(row[2] || "");
+                    const isUnsubAI = labelWA.replace(/\s+/g, '').toUpperCase().includes("UNSUBAI");
+                    const rawVal = row[25];
+                    const isUnread = rawVal === true || String(rawVal).toLowerCase().trim() === "true" || String(rawVal).toLowerCase().trim() === "benar";
+
+                    const timeP = row[15] || ""; 
+                    const timeQ = row[16] || ""; 
+                    
+                    const parsedP = parseTime(timeP);
+                    const parsedQ = parseTime(timeQ);
+                    
+                    const maxTimeVal = Math.max(parsedP, parsedQ);
+                    const displayTime = maxTimeVal === parsedP ? timeP : timeQ;
+
+                    contactMap.set(id, {
+                        id: id, 
+                        name: row[7] || id,
+                        isMe: String(row[13]).toLowerCase().trim() === "true",
+                        time: displayTime, 
+                        timeVal: maxTimeVal, 
+                        waLabel: labelWA,
+                        unsub: isUnsubAI, 
+                        device: String(row[3] || "Default").trim(), 
+                        biodata: String(row[9] || ""), 
+                        lastMsg: lastLines.length > 1 ? lastLines.slice(1).join(' ').trim() : lastMsgRaw,
+                        isUnread: isUnread
+                    });
+                }
+            });
+            contactsArray = Array.from(contactMap.values());
+        }
+        
+        const contacts = contactsArray.filter(c => {
             const matchSearch = c.name.toLowerCase().includes(searchTerm) || c.id.toLowerCase().includes(searchTerm);
             const matchDevice = selectedDevice === "Semua" || c.device === selectedDevice;
             const labelArray = c.waLabel.split(',').map(l => l.trim());
@@ -1683,6 +1898,8 @@ function getAvatarColorClass(isMe, waLabel) {
             if (!bgClass) {
                 bgClass = c.unsub ? 'bg-red-50/40' : (c.isUnread ? 'bg-blue-50/30' : '');
             }
+            // Jika mode duplikat sedang nyala, tandai semua kartu dengan warna peringatan tipis
+            if (!bgClass && showDuplicateNetOnly) bgClass = 'bg-orange-50/30';
             
             const div = document.createElement('div');
             div.className = `contact-item p-3 flex gap-3 items-center ${bgClass}`;
@@ -1890,8 +2107,24 @@ function formatRfmTextCompact(rfmLine) {
         const apiUrlValid = rowData && String(rowData[32] || "").trim() !== "";
         
         // Pengecekan Status Device dari Kolom C (Indeks 2) di deviceCache
-        const devSetting = deviceCache.find(d => d.providerId === contact.device);
+        const devSetting = deviceCache.find(d => d.providerId === contact.device || String(d.fullRow[0] || "").trim() === contact.device);
         const isDeviceOff = devSetting && String(devSetting.fullRow[2] || "").trim().toUpperCase() === "DEVICE OFF";
+
+        // --- BLOK KODE BARU: LOGIKA PINNED MESSAGE (Kolom D / Index 3) ---
+        currentActiveDeviceSetting = devSetting; // Simpan ke global untuk Tooltip
+        const pinnedContainer = document.getElementById('pinned-msg-container');
+        const pinnedTextEl = document.getElementById('pinned-msg-text');
+        
+        // Menarik data catatan dari Kolom D (Indeks 3)
+        const catatanDevice = devSetting && devSetting.fullRow ? String(devSetting.fullRow[3] || "").trim() : "";
+
+        if (catatanDevice !== "" && catatanDevice !== "-") {
+            pinnedTextEl.innerText = catatanDevice;
+            pinnedContainer.classList.remove('hidden');
+        } else {
+            pinnedContainer.classList.add('hidden');
+        }
+        // ------------------------------------------------------------------
 
         // 4. Reset Semua Area Bawah (Disembunyikan)
         inputContainer.classList.add('hidden');
@@ -1965,14 +2198,18 @@ function formatRfmTextCompact(rfmLine) {
                 .markAsRead(SHEET_URL, contact.id);
         }
         
-        refreshChat(); renderSidebar(); openChat();
+        refreshChat(true); renderSidebar(); openChat(); // Beri param 'true' agar selalu auto-scroll saat pindah kontak
     }
 
     // Cari bagian dalam fungsi refreshChat() lalu modifikasi menjadi ini:
-function refreshChat() {
-    const content = document.getElementById('chat-content');
-    const rows = allData.filter(r => r[1] === currentContactId);
-    content.innerHTML = "";
+function refreshChat(forceScroll = false) {
+        const chatWin = document.getElementById('chat-window');
+        // Deteksi apakah posisi scroll sedang berada di area bawah (toleransi 100px) sebelum konten direfresh
+        const isScrolledToBottom = chatWin.scrollHeight - chatWin.scrollTop - chatWin.clientHeight < 100;
+
+        const content = document.getElementById('chat-content');
+        const rows = allData.filter(r => r[1] === currentContactId);
+        content.innerHTML = "";
     
     // Gunakan DocumentFragment untuk efisiensi
     const fragment = document.createDocumentFragment();
@@ -2039,9 +2276,10 @@ function refreshChat() {
     // Render semua chat ke layar dalam 1 ketukan
     content.appendChild(fragment);
     
-    const chatWin = document.getElementById('chat-window');
-    chatWin.scrollTo({ top: chatWin.scrollHeight });
-}
+    if (forceScroll || isScrolledToBottom) {
+            chatWin.scrollTo({ top: chatWin.scrollHeight });
+        }
+    }
 
     // Variabel untuk menampung data file
     let selectedFileData = null;
@@ -2253,95 +2491,141 @@ function refreshChat() {
 
     // Fungsi membuka modal saat avatar diklik
 function openEditModal() {
-        if (!currentContactId) return;
-        const row = allData.find(r => r[1] === currentContactId);
-        if (!row) return;
+    if (!currentContactId) return;
+    const row = allData.find(r => r[1] === currentContactId);
+    if (!row) return;
 
-        // Isi field nama (row[7])
-        document.getElementById('edit-name-input').value = row[7] || "";
-        
-        // TAMBAHAN BARU: Isi field biodata (row[8])
-        document.getElementById('edit-biodata-input').value = row[9] || "";
-        
-        // Ambil label yang sedang aktif di kontak ini (row[2])
-        const currentLabels = (row[2] || "").toUpperCase().split(',').map(l => l.trim());
+    // Data Bawaan
+    document.getElementById('edit-name-input').value = row[7] || "";
+    document.getElementById('edit-biodata-input').value = row[9] || "";
+    
+    // BLOK KODE BARU: Setup Data Lanjutan (AA-AF)
+    let fufDayVal = row[26] !== "" && row[26] !== undefined ? row[26] : 7;
+    document.getElementById('edit-fuf-day').value = fufDayVal;
+    
+    let fufVal = row[27] !== "" && row[27] !== undefined ? row[27] : 0;
+    document.getElementById('edit-fuf').value = fufVal;
+    
+    document.getElementById('edit-next-send').value = row[28] || "";
+    
+    let adVal = String(row[29] || "").toUpperCase() === "FALSE" ? "FALSE" : "TRUE";
+    document.getElementById('edit-ad').value = adVal;
+    
+    document.getElementById('edit-first-name').value = row[30] || "";
 
-        // Generate Checkbox Label (Kode tetap sama)
-        const container = document.getElementById('edit-labels-container');
-        container.innerHTML = "";
-        
-        if (masterLabelsList.length === 0) {
-            container.innerHTML = '<span class="text-xs text-red-400">Gagal memuat label / F13 Kosong. Refresh halaman.</span>';
-        } else {
-            masterLabelsList.forEach(label => {
-                const isChecked = currentLabels.includes(label.toUpperCase()) ? "checked" : "";
-                container.innerHTML += `
-                    <label class="flex items-center gap-2 text-sm cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors">
-                        <input type="checkbox" value="${label}" class="label-checkbox w-4 h-4 text-[#00a884] rounded border-gray-300 focus:ring-[#00a884]" ${isChecked}>
-                        <span class="text-gray-700 font-medium">${label}</span>
-                    </label>
-                `;
-            });
-        }
-        
-        document.getElementById('edit-modal').classList.remove('hidden');
+    // Generate Checkbox Label (Kode tetap sama)
+    const currentLabels = (row[2] || "").toUpperCase().split(',').map(l => l.trim());
+    const container = document.getElementById('edit-labels-container');
+    container.innerHTML = "";
+    
+    if (masterLabelsList.length === 0) {
+        container.innerHTML = '<span class="text-xs text-red-400">Gagal memuat label.</span>';
+    } else {
+        masterLabelsList.forEach(label => {
+            const isChecked = currentLabels.includes(label.toUpperCase()) ? "checked" : "";
+            container.innerHTML += `
+                <label class="flex items-center gap-2 text-sm cursor-pointer hover:bg-gray-200 p-1 rounded transition-colors">
+                    <input type="checkbox" value="${label}" class="label-checkbox w-4 h-4 text-[#00a884] rounded border-gray-300 focus:ring-[#00a884]" ${isChecked}>
+                    <span class="text-gray-700 font-medium">${label}</span>
+                </label>
+            `;
+        });
     }
+    document.getElementById('edit-modal').classList.remove('hidden');
+}
 
-    // Fungsi menyimpan perubahan ke Sheet
-    function saveProfile() {
-        const btn = document.getElementById('btn-save-profile');
-        const newName = document.getElementById('edit-name-input').value.trim();
-        
-        // TAMBAHAN BARU: Tangkap isi Biodata
-        const newBiodata = document.getElementById('edit-biodata-input').value.trim();
-        
-        // Kumpulkan semua checkbox yang dicentang
-        const checkboxes = document.querySelectorAll('.label-checkbox:checked');
-        const newLabels = Array.from(checkboxes).map(cb => cb.value).join(', ');
+// BLOK KODE BARU: Algoritma Pembuat First Name Dinamis
+function generateFirstName() {
+    const row = allData.find(r => r[1] === currentContactId);
+    if (!row) return;
+    
+    let akun = String(row[0] || "");
+    let prefixAkun = akun.substring(0, 2);
+    
+    let deviceNum = String(row[4] || "").replace(/\D/g, '');
+    let suffixDevice = deviceNum.slice(-4);
+    
+    // Cek label yang dicentang user saat itu juga (Real-time tracking)
+    const checkboxes = document.querySelectorAll('.label-checkbox:checked');
+    const labels = Array.from(checkboxes).map(cb => cb.value.toUpperCase());
+    
+    let labelVal = "";
+    if (labels.includes("SV")) labelVal = ".SV";
+    else if (labels.includes("ABC")) labelVal = ".ABC";
+    else if (labels.includes("NEW")) labelVal = ".NEW";
+    
+    let namaPanggilan = document.getElementById('edit-name-input').value.trim();
+    if (namaPanggilan !== "") namaPanggilan = " " + namaPanggilan + " ";
+    else namaPanggilan = " ";
+    
+    let waCust = String(row[5] || "").replace(/\D/g, '');
+    
+    let output = `${prefixAkun}${suffixDevice}${labelVal}${namaPanggilan}[${waCust}]`;
+    document.getElementById('edit-first-name').value = output;
+}
 
-       // BLOK KODE BARU
-        // Menyisipkan spinner CSS ke dalam tombol
-        btn.innerHTML = `<div class="flex items-center justify-center gap-2"><div class="spinner-small"></div><span>Menyimpan...</span></div>`;
-        btn.disabled = true;
-        btn.classList.add('opacity-70');
+function saveProfile() {
+    const btn = document.getElementById('btn-save-profile');
+    const newName = document.getElementById('edit-name-input').value.trim();
+    const newBiodata = document.getElementById('edit-biodata-input').value.trim();
+    
+    const checkboxes = document.querySelectorAll('.label-checkbox:checked');
+    const newLabels = Array.from(checkboxes).map(cb => cb.value).join(', ');
 
-        google.script.run
-            .withSuccessHandler(function(status) {
-                if (status === "success") {
-                    // Update data lokal
-                    const rowIndex = allData.findIndex(r => r[1] === currentContactId);
-                    if (rowIndex > -1) {
-                        allData[rowIndex][7] = newName; // Update Nama
-                        allData[rowIndex][2] = newLabels; // Update Label
-                        allData[rowIndex][9] = newBiodata; // Update Biodata
-                    }
-                    
-                    document.getElementById('edit-modal').classList.add('hidden');
-                    
-                    // Refresh bagian Header Chat & Sidebar
-                    document.getElementById('chat-name').innerText = newName;
-                    const badges = document.getElementById('chat-badges');
-                    const isUnsub = newLabels.replace(/\s+/g, '').toUpperCase().includes("UNSUBAI");
-                    badges.innerHTML = (newLabels ? `<span class="badge-wa !bg-white/20 !text-white border-none">${newLabels}</span>` : '') + (isUnsub ? `<span class="badge-unsub-ai !bg-red-500 !text-white border-white/40">UNSUB AI</span>` : '');
-                    
-                    renderSidebar();
-                    showToast("Profil & Biodata berhasil diperbarui!");
-                } else {
-                    showToast("Gagal menyimpan data.");
+    // Kumpulkan Nilai Data Baru
+    const dataObj = {
+        name: newName,
+        biodata: newBiodata,
+        labels: newLabels,
+        fufDay: document.getElementById('edit-fuf-day').value,
+        fuf: document.getElementById('edit-fuf').value,
+        editAd: document.getElementById('edit-ad').value,
+        firstName: document.getElementById('edit-first-name').value
+    };
+
+    btn.innerHTML = `<div class="flex items-center justify-center gap-2"><div class="spinner-small"></div><span>Menyimpan...</span></div>`;
+    btn.disabled = true;
+    btn.classList.add('opacity-70');
+
+    google.script.run
+        .withSuccessHandler(function(status) {
+            if (status === "success") {
+                // Update Cache Lokal
+                const rowIndex = allData.findIndex(r => r[1] === currentContactId);
+                if (rowIndex > -1) {
+                    allData[rowIndex][7] = dataObj.name; 
+                    allData[rowIndex][2] = dataObj.labels; 
+                    allData[rowIndex][9] = dataObj.biodata; 
+                    allData[rowIndex][26] = dataObj.fufDay;
+                    allData[rowIndex][27] = dataObj.fuf;
+                    allData[rowIndex][29] = dataObj.editAd === "FALSE" ? false : true;
+                    allData[rowIndex][30] = dataObj.firstName;
                 }
-                btn.innerText = "Simpan";
-                btn.disabled = false;
-                btn.classList.remove('opacity-70');
-            })
-            .withFailureHandler(function(e) {
-                showToast("Error koneksi saat menyimpan.");
-                btn.innerText = "Simpan";
-                btn.disabled = false;
-                btn.classList.remove('opacity-70');
-            })
-            // PASTIKAN menambahkan newBiodata di baris terakhir ini
-            .updateContactData(SHEET_URL, currentContactId, newName, newLabels, newBiodata);
-    }
+                
+                document.getElementById('edit-modal').classList.add('hidden');
+                
+                document.getElementById('chat-name').innerText = newName;
+                const badges = document.getElementById('chat-badges');
+                const isUnsub = newLabels.replace(/\s+/g, '').toUpperCase().includes("UNSUBAI");
+                badges.innerHTML = (newLabels ? `<span class="badge-wa !bg-white/20 !text-white border-none">${newLabels}</span>` : '') + (isUnsub ? `<span class="badge-unsub-ai !bg-red-500 !text-white border-white/40">UNSUB AI</span>` : '');
+                
+                renderSidebar();
+                showToast("Profil Lengkap & Setup FUF berhasil diperbarui!");
+            } else {
+                showToast("Gagal menyimpan data ke Database.");
+            }
+            btn.innerText = "Simpan";
+            btn.disabled = false;
+            btn.classList.remove('opacity-70');
+        })
+        .withFailureHandler(function(e) {
+            showToast("Error koneksi jaringan saat menyimpan.");
+            btn.innerText = "Simpan";
+            btn.disabled = false;
+            btn.classList.remove('opacity-70');
+        })
+        .updateContactProfileFullNative(SHEET_URL, currentContactId, dataObj);
+}
 
     // --- FUNGSI TOGGLE PESAN STATIS ---
     function togglePesanStatis() {
@@ -2357,25 +2641,50 @@ function openEditModal() {
     }
 
 // --- FUNGSI BARU: TARIK DATA DEVICE DI BACKGROUND ---
-    function fetchSilentDeviceCache() {
-        if (!SHEET_URL) return;
-        google.script.run
-            .withSuccessHandler(function(data) {
-                if (data && data.devices) {
-                    let rawDevices = data.devices || []; 
-                    if (typeof isMasterAdmin !== 'undefined' && !isMasterAdmin && typeof userAllowedAccounts !== 'undefined') {
-                        deviceCache = rawDevices.filter(d => {
-                            let akunDevice = String(d.fullRow[1] || "").trim();
-                            return userAllowedAccounts.includes(akunDevice);
-                        });
-                    } else {
-                        deviceCache = rawDevices;
-                    }
-                    updateDeviceFilter(); // Update seketika agar (17/0) berubah jadi data asli
+function fetchSilentDeviceCache() {
+    if (!SHEET_URL) return;
+    google.script.run
+        .withSuccessHandler(function(data) {
+            if (data && data.devices) {
+                // 1. Suntik Webhook
+                if (document.getElementById('webhook-url-display')) {
+                    document.getElementById('webhook-url-display').value = data.webhookUrl || "A2 Kosong / URL belum dideteksi";
                 }
-            })
-            .getSettingsForUI(SHEET_URL);
-    }
+                
+                // 2. Suntik B23 & B24 (Pastikan ID input sesuai dengan form modal Abang, contoh: send-6 & send-7)
+                if (document.getElementById('send-6') && data.send && data.send[6]) {
+                    document.getElementById('send-6').value = data.send[6];
+                }
+                if (document.getElementById('send-7') && data.send && data.send[7]) {
+                    document.getElementById('send-7').value = (parseFloat(data.send[7]) * 100) || 0; // Kembalikan format 50%
+                }
+                
+                // 3. Simpan Bank Content ke memori Frontend
+                if (data.bankContent) globalBankContentCache = data.bankContent;
+                
+                let rawDevices = data.devices || [];
+                
+                // Ekstraksi Khusus CS: Filter berdasarkan Nomor Server (Kolom G)
+                if (typeof isCS !== 'undefined' && isCS) {
+                    let csNum = userAllowedAccounts[0].substring(3);
+                    deviceCache = rawDevices.filter(d => String(d.fullRow[6] || "").trim() === csNum);
+                } 
+                // Ekstraksi Khusus Admin Biasa
+                else if (typeof isMasterAdmin !== 'undefined' && !isMasterAdmin && typeof userAllowedAccounts !== 'undefined') {
+                    deviceCache = rawDevices.filter(d => {
+                        let akunDevice = String(d.fullRow[1] || "").trim();
+                        return userAllowedAccounts.includes(akunDevice);
+                    });
+                } 
+                // Ekstraksi Master Admin
+                else {
+                    deviceCache = rawDevices;
+                }
+                updateDeviceFilter(); 
+            }
+        })
+        .getSettingsForUI(SHEET_URL);
+}
 
 </script>
 
@@ -2385,41 +2694,77 @@ function openEditModal() {
 </div>
 
 <div id="edit-modal" class="fixed inset-0 bg-black/60 flex items-center justify-center p-6 z-[200] hidden backdrop-blur-sm">
-    <div class="bg-white rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden">
-        <div class="bg-[#008069] p-4 text-white font-bold flex justify-between items-center">
+    <!-- Ubah flex-col dan batasan tinggi agar modal bisa di-scroll dengan mulus -->
+    <div class="bg-white rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        <div class="bg-[#008069] p-4 text-white font-bold flex justify-between items-center shrink-0">
             <span>Edit Profil Kontak</span>
             <div class="flex items-center gap-4">
-                <!-- Tombol Hapus (Bin) -->
                 <button onclick="deleteProfile()" class="text-white hover:text-red-300 transition-colors" title="Hapus Profil">
                     <svg width="18" height="18" fill="currentColor" viewBox="0 0 16 16"><path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/><path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/></svg>
                 </button>
-                <!-- Tombol Close (X) -->
                 <button onclick="document.getElementById('edit-modal').classList.add('hidden')" class="text-white hover:text-gray-200 text-xl font-bold">&times;</button>
             </div>
         </div>
-        <div class="p-5 space-y-4">
+        
+        <!-- Overflow y auto agar form tidak meluber layar -->
+        <div class="p-5 overflow-y-auto custom-scrollbar flex-1 space-y-4">
             <div>
                 <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Nama Kontak</label>
                 <input type="text" id="edit-name-input" class="w-full border-b-2 border-gray-100 p-2 text-sm focus:border-[#00a884] outline-none transition-colors" placeholder="Masukkan nama...">
             </div>
-            
             <div>
                 <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1">Biodata / Catatan</label>
                 <textarea id="edit-biodata-input" rows="3" class="w-full border-2 border-gray-100 rounded-lg p-2 text-sm focus:border-[#00a884] outline-none transition-colors resize-none" placeholder="Masukkan biodata atau catatan pelanggan..."></textarea>
             </div>
-
             <div>
                 <label class="block text-[10px] font-bold text-gray-400 uppercase mb-2">Label WA</label>
-                <div id="edit-labels-container" class="max-h-40 overflow-y-auto grid grid-cols-2 gap-2 bg-gray-50 p-3 rounded-lg border border-gray-100">
+                <div id="edit-labels-container" class="max-h-32 overflow-y-auto grid grid-cols-2 gap-2 bg-gray-50 p-3 rounded-lg border border-gray-100">
                     <span class="text-xs text-gray-400 italic">Memuat label...</span>
                 </div>
             </div>
-            <div class="flex gap-3 pt-2">
-                <button onclick="document.getElementById('edit-modal').classList.add('hidden')" class="flex-1 py-2.5 text-gray-500 font-bold text-sm bg-gray-100 rounded-lg">Batal</button>
-                <button id="btn-save-profile" onclick="saveProfile()" class="flex-1 bg-[#00a884] text-white py-2.5 rounded-lg font-bold text-sm shadow-md transition-colors hover:bg-[#008f6f]">Simpan</button>
+
+            <!-- BLOK KODE BARU: ADVANCED PROFILING (AA-AF) -->
+            <div class="border-t border-gray-100 pt-3 mt-3">
+                <label class="block text-[10px] font-bold text-[#008069] uppercase mb-2">Konfigurasi Follow Up & ID</label>
+                <div class="grid grid-cols-2 gap-3 mb-3">
+                    <div>
+                        <label class="block text-[9px] font-bold text-gray-500 uppercase mb-1">Fuf (Day) - AA</label>
+                        <input type="number" id="edit-fuf-day" class="w-full border-b-2 border-gray-100 p-2 text-xs focus:border-[#00a884] outline-none transition-colors">
+                    </div>
+                    <div>
+                        <label class="block text-[9px] font-bold text-gray-500 uppercase mb-1">FUF - AB</label>
+                        <input type="number" id="edit-fuf" class="w-full border-b-2 border-gray-100 p-2 text-xs focus:border-[#00a884] outline-none transition-colors">
+                    </div>
+                    <div>
+                        <label class="block text-[9px] font-bold text-gray-500 uppercase mb-1">Next Send FU - AC</label>
+                        <input type="text" id="edit-next-send" readonly class="w-full bg-gray-50 border border-gray-100 p-2 text-[10px] text-gray-400 outline-none rounded cursor-not-allowed">
+                    </div>
+                    <div>
+                        <label class="block text-[9px] font-bold text-gray-500 uppercase mb-1">SYNC GContact - AD</label>
+                        <select id="edit-ad" class="w-full border-b-2 border-gray-100 p-2 text-xs focus:border-[#00a884] outline-none transition-colors cursor-pointer">
+                            <option value="TRUE">True</option>
+                            <option value="FALSE">False</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="flex justify-between items-center text-[9px] font-bold text-gray-500 uppercase mb-1">
+                        <span>Nama GContact - AE</span>
+                        <button onclick="generateFirstName()" class="text-[#008069] border border-[#008069] rounded px-1.5 py-0.5 hover:bg-[#008069] hover:text-white transition-colors">Auto Generate</button>
+                    </label>
+                    <input type="text" id="edit-first-name" class="w-full border-b-2 border-gray-100 p-2 text-xs focus:border-[#00a884] outline-none transition-colors">
+                </div>
             </div>
+            <!-- BATAS KODE BARU -->
+
+        </div>
+        <!-- Tombol Aksi di Luar Area Scroll -->
+        <div class="flex gap-3 p-4 border-t border-gray-100 shrink-0 bg-gray-50">
+            <button onclick="document.getElementById('edit-modal').classList.add('hidden')" class="flex-1 py-2.5 text-gray-500 font-bold text-sm bg-white border border-gray-200 rounded-lg hover:bg-gray-100">Batal</button>
+            <button id="btn-save-profile" onclick="saveProfile()" class="flex-1 bg-[#00a884] text-white py-2.5 rounded-lg font-bold text-sm shadow-md transition-colors hover:bg-[#008f6f]">Simpan</button>
         </div>
     </div>
+</div>
 </div>
 
 <div id="config-modal" class="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[100] hidden backdrop-blur-sm">
@@ -2613,7 +2958,7 @@ function openEditModal() {
                                 <div>
                                     <label class="block text-[10px] font-bold text-gray-500 uppercase mb-1 flex items-center gap-1 w-fit">
                                         Day Tier 2 (B23)
-                                        <svg onclick="showTooltip('Day Tier 2', 'Rasio tier 1 diatur melalui menu device. Saat ini whatapp juga menerapkan tier 2 yakni rasio 30 hari. Beberapa artikel menyebutkan bahwa algoritma whatsapp menghitung berapa jumlah pesan keluar dan masuk setiap nomor selama 30 hari terakhir.')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+                                        <svg onclick="showTooltip('Day Tier 2', 'Rasio cadangan / tier 2 untuk mengantisipasi algoritma whatsapp yang juga menghitung berapa jumlah pesan keluar dan masuk setiap nomor selama 30 hari terakhir.')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
                                     </label>
                                     <input id="send-6" type="text" class="w-full bg-[#f0f2f5] rounded-xl p-3 text-[13px] text-gray-800 outline-none border-none focus:ring-2 focus:ring-[#25D366]/50 transition-all">
                                 </div>
@@ -2657,13 +3002,16 @@ function openEditModal() {
 </div>
 
 <!-- SUB-MODAL TAMBAH/EDIT DEVICE (DIPERLUAS UNTUK 16 KOLOM HIJAU) -->
-<!-- SUB-MODAL TAMBAH/EDIT DEVICE -->
 <div id="dev-modal" class="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-[110] hidden backdrop-blur-sm">
     <div class="bg-white rounded-xl w-full max-w-3xl p-5 shadow-2xl flex flex-col max-h-[95vh]">
         <div class="flex justify-between items-center border-b pb-3 mb-4">
             <h3 id="dev-title" class="font-bold text-gray-700 text-lg">Edit Device</h3>
             <button onclick="closeDevForm()" class="text-gray-400 hover:text-red-500 font-bold text-xl">&times;</button>
         </div>
+
+  <!-- Area Form Scrollable -->
+<div class="overflow-y-auto flex-1 pr-2 space-y-4 custom-scrollbar min-h-0">
+    <input type="hidden" id="dev-index">
         
         <!-- Wadah URL Webhook -->
         <div id="webhook-container" class="mb-5 p-3 bg-blue-50 border border-blue-200 rounded-lg hidden">
@@ -2678,9 +3026,7 @@ function openEditModal() {
             </p>
         </div>
 
-        <!-- Area Form Scrollable -->
-<div class="overflow-y-auto flex-1 pr-2 space-y-4 custom-scrollbar min-h-0">
-    <input type="hidden" id="dev-index">
+        
     
     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
         <!-- Device Name -->
@@ -2700,28 +3046,6 @@ function openEditModal() {
             </label>
             <input type="text" id="dev-col-1" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none">
         </div>
-        
-        <!-- Kirim Pesan -->
-        <div>
-            <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
-                Kirim Pesan (C)
-                <svg onclick="showTooltip('Kirim Pesan (C)', 'Status aktif/tidaknya device ini untuk mengirim pesan blast atau broadcast otomatis.')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
-            </label>
-            <select id="dev-col-2" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none cursor-pointer">
-                <option value="ON">ON</option>
-                <option value="OFF">OFF</option>
-                <option value="Device OFF">Device OFF</option>
-            </select>
-        </div>
-        
-        <!-- Set Rasio -->
-        <div>
-            <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
-                Set Rasio (Z)
-                <svg onclick="showTooltip('Set Rasio (Z)', 'Persentase batas Rasio pesan keluar dan pesan masuk harian. Cara kerjanya jika ada 10 pesan masuk maka sistem akan mengirim 5 pesan broadcast ke costumer. Rasio paling aman saat ini menggunakan 2:1 (50%), admin bisa bereksperimen memulai menggunakan angka 50% selama 7 hari, ternyata tidak diblokir maka bisa dinaikan menjadi 55%. Namun jika terkena pemblokiran maka rasio diatur agar lebih rendah dari 50% menjadi 25%')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
-            </label>
-            <input type="text" id="dev-col-25" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none">
-        </div>
 
         <!-- No Server -->
         <div>
@@ -2739,45 +3063,6 @@ function openEditModal() {
                 <svg onclick="showTooltip('BSUID (H)', 'ID identitas unik dari server WhatsApp (Opsional/Bisa dikosongkan).')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
             </label>
             <input type="text" id="dev-col-7" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none">
-        </div>
-        
-        <!-- API KEY -->
-        <div class="md:col-span-2">
-            <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
-                API Key (I)
-                <svg onclick="showTooltip('API Key (I)', 'Kode keamanan/Token dari penyedia layanan pihak ketiga (Starsender/Onesender) agar OmniBot bisa mengirim pesan via API.')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
-            </label>
-            <input type="text" id="dev-col-8" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none">
-        </div>
-
-        <!-- API URL -->
-        <div>
-            <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
-                API URL (J)
-                <svg onclick="showTooltip('API URL (J)', 'Link target pengiriman pesan (Contoh: https://api.starsender.online/api/send).')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
-            </label>
-            <input type="text" id="dev-col-9" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none">
-        </div>
-        
-        <!-- Prefix URL -->
-        <div>
-            <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
-                Prefix URL (K)
-                <svg onclick="showTooltip('Prefix URL (K)', 'Khusus pengguna OneSender: Isi dengan URL dasar (Domain) server Anda tanpa /api... belakangnya.')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
-            </label>
-            <input type="text" id="dev-col-10" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none">
-        </div>
-        
-        <!-- AI Replay -->
-        <div>
-            <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
-                AI Replay (L)
-                <svg onclick="showTooltip('AI Replay (L)', 'Tombol sakelar untuk mengizinkan atau melarang sistem AI membalas otomatis di device ini.')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
-            </label>
-            <select id="dev-col-11" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none cursor-pointer">
-                <option value="ON">ON</option>
-                <option value="OFF">OFF</option>
-            </select>
         </div>
         
         <!-- Auto Label -->
@@ -2810,24 +3095,201 @@ function openEditModal() {
             <input type="date" id="dev-col-24" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none h-[38px] cursor-pointer">
         </div>
     </div>
-    
-    <div class="mt-4">
-        <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
+
+  
+  <!-- BLOK KODE BARU: AI Finance Lanjutan (Collapsible) -->
+    <div class="mt-4 border border-gray-200 rounded-lg p-3 bg-gray-50/50 shadow-sm transition-all">
+        <!-- Header Toggle -->
+        <div class="flex justify-between items-center cursor-pointer select-none" 
+             onclick="const panel = document.getElementById('advanced-finance-panel'); const icon = document.getElementById('finance-toggle-icon'); panel.classList.toggle('hidden'); if(panel.classList.contains('hidden')) { icon.innerText = '▼ Tampilkan'; } else { icon.innerText = '▲ Sembunyikan'; }">
+            <div class="flex items-center gap-2">
+                <span class="bg-[#008069] text-white text-[9px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">Set. AI Finance</span>
+                <span id="finance-toggle-icon" class="text-[11px] font-bold text-gray-600 hover:text-[#008069] transition-colors">▼ Tampilkan</span>
+            </div>
+            <svg width="14" height="14" fill="currentColor" class="text-gray-400" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M1 8a.5.5 0 0 1 .5-.5h11.793l-3.147-3.146a.5.5 0 0 1 .708-.708l4 4a.5.5 0 0 1 0 .708l-4 4a.5.5 0 0 1-.708-.708L13.293 8.5H1.5A.5.5 0 0 1 1 8z"/></svg>
+        </div>
+        
+        <!-- Panel Tersembunyi (Hidden by default) -->
+        <div id="advanced-finance-panel" class="hidden mt-3 pt-3 border-t border-gray-200 space-y-4">
+
+        <div>
+            <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
+            Info Rekening Invoice (AB)
+            <svg onclick="showTooltip('Info Rekening Invoice (AB)', 'informasi nomor rekening yang akan muncul dimenu finance saat membuat invoice digital dengan status Pending. Akan automatis hiden saat status bukan pending')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+            </label>
+            <textarea id="dev-col-27" placeholder="Link Google Drive Logo..." class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none"></textarea>
+        </div>
+
+        <div>
+            <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
+            Link Logo Invoice (AC)
+            <svg onclick="showTooltip('Link Logo Invoice (AC)', 'logo akan muncul di menu finance saat membuat invoice digital.')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+            </label>
+            <textarea id="dev-col-28" placeholder="Link Google Drive Logo..." class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none"></textarea>
+        </div>
+
+       <!-- Prefix URL -->
+        <div>
+            <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
+                Prefix URL (K)
+                <svg onclick="showTooltip('Prefix URL (K)', 'Khusus pengguna OneSender: Isi dengan URL dasar (Domain) server Anda tanpa /api... belakangnya.')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+            </label>
+            <input type="text" id="dev-col-10" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none">
+        </div>
+
+        <div>
+            <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
             Prompt Vision (N)
-            <svg onclick="showTooltip('Prompt Vision (N)', 'Tugas khusus untuk AI saat menerima kiriman gambar (Misal: Baca struk mutasi ini, ekstrak nama dan harga, lalu formatkan ke CSV).')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
-        </label>
-        <textarea id="dev-col-13" rows="3" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none"></textarea>
-    </div>
+                    <svg onclick="showTooltip('Prompt Vision (N)', 'Tugas khusus untuk AI saat menerima kiriman gambar (Misal: Baca struk mutasi ini, ekstrak nama dan harga, lalu formatkan ke CSV).')"  width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+            </label>
+            <textarea id="dev-col-13" placeholder="isi promt dengan format..." class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none"></textarea>
+        </div>
+
+     </div> 
+ </div> 
     
-    <div class="mt-4">
-        <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
+    <!-- BLOK KODE BARU: AI Auto Replay Lanjutan (Collapsible) -->
+    <div class="mt-4 border border-gray-200 rounded-lg p-3 bg-gray-50/50 shadow-sm transition-all">
+        <!-- Header Toggle -->
+        <div class="flex justify-between items-center cursor-pointer select-none" 
+             onclick="const panel = document.getElementById('advanced-prompt-panel'); const icon = document.getElementById('prompt-toggle-icon'); panel.classList.toggle('hidden'); if(panel.classList.contains('hidden')) { icon.innerText = '▼ Tampilkan'; } else { icon.innerText = '▲ Sembunyikan'; }">
+            <div class="flex items-center gap-2">
+                <span class="bg-[#008069] text-white text-[9px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">Set. AI Auto Replay</span>
+                <span id="prompt-toggle-icon" class="text-[11px] font-bold text-gray-600 hover:text-[#008069] transition-colors">▼ Tampilkan</span>
+            </div>
+            <svg width="14" height="14" fill="currentColor" class="text-gray-400" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M1 8a.5.5 0 0 1 .5-.5h11.793l-3.147-3.146a.5.5 0 0 1 .708-.708l4 4a.5.5 0 0 1 0 .708l-4 4a.5.5 0 0 1-.708-.708L13.293 8.5H1.5A.5.5 0 0 1 1 8z"/></svg>
+        </div>
+        
+        <!-- Panel Tersembunyi (Hidden by default) -->
+        <div id="advanced-prompt-panel" class="hidden mt-3 pt-3 border-t border-gray-200 space-y-4">
+
+        <!-- AI Replay -->
+        <div>
+            <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
+                AI Replay (L)
+                <svg onclick="showTooltip('AI Replay (L)', 'Tombol sakelar untuk mengizinkan atau melarang sistem AI membalas otomatis di device ini.')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+            </label>
+            <select id="dev-col-11" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none cursor-pointer">
+                <option value="ON">ON</option>
+                <option value="OFF">OFF</option>
+            </select>
+        </div>
+
+      <!-- API KEY -->
+        <div class="md:col-span-2">
+            <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
+                API Key (I)
+                <svg onclick="showTooltip('API Key (I)', 'Kode keamanan/Token dari penyedia layanan pihak ketiga (Starsender/Onesender) agar OmniBot bisa mengirim pesan via API.')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+            </label>
+            <input type="text" id="dev-col-8" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none">
+        </div>
+
+        <!-- API URL -->
+        <div>
+            <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
+                API URL (J)
+                <svg onclick="showTooltip('API URL (J)', 'Link target pengiriman pesan (Contoh: https://api.starsender.online/api/send).')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+            </label>
+            <input type="text" id="dev-col-9" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none">
+        </div>
+
+        <div>
+            <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
             Prompt Gemini (M)
-            <svg onclick="showTooltip('Prompt Gemini (M)', 'Instruksi khusus atau kepribadian yang diberikan ke sistem AI untuk menentukan cara ia membalas chat pelanggan pada device ini.')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
-        </label>
-        <textarea id="dev-col-12" rows="3" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none"></textarea>
+                    <svg onclick="showTooltip('Prompt Gemini (M)', 'Instruksi khusus atau kepribadian yang diberikan ke sistem AI untuk menentukan cara ia membalas chat pelanggan pada device ini.')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+            </label>
+            <textarea id="dev-col-12" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none"></textarea>
+        </div>
+
+        </div>
     </div>
-</div>        
-        <div class="flex gap-3 mt-5 pt-4 border-t shrink-0">
+
+<!-- BLOK KODE BARU: Kirim Pesan Lanjutan (Collapsible) -->
+    <div class="mt-4 border border-gray-200 rounded-lg p-3 bg-gray-50/50 shadow-sm transition-all">
+        <!-- Header Toggle -->
+        <div class="flex justify-between items-center cursor-pointer select-none" 
+             onclick="const panel = document.getElementById('advanced-send-panel'); const icon = document.getElementById('send-toggle-icon'); panel.classList.toggle('hidden'); if(panel.classList.contains('hidden')) { icon.innerText = '▼ Tampilkan'; } else { icon.innerText = '▲ Sembunyikan'; }">
+            <div class="flex items-center gap-2">
+                <span class="bg-[#008069] text-white text-[9px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">Set. Broadcast</span>
+                <span id="send-toggle-icon" class="text-[11px] font-bold text-gray-600 hover:text-[#008069] transition-colors">▼ Tampilkan</span>
+            </div>
+            <svg width="14" height="14" fill="currentColor" class="text-gray-400" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M1 8a.5.5 0 0 1 .5-.5h11.793l-3.147-3.146a.5.5 0 0 1 .708-.708l4 4a.5.5 0 0 1 0 .708l-4 4a.5.5 0 0 1-.708-.708L13.293 8.5H1.5A.5.5 0 0 1 1 8z"/></svg>
+        </div>
+        
+        <!-- Panel Tersembunyi (Hidden by default) -->
+        <div id="advanced-send-panel" class="hidden mt-3 pt-3 border-t border-gray-200 space-y-4">
+
+
+    <!-- Kirim Pesan -->
+        <div>
+            <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
+                Kirim Pesan (C)
+                <svg onclick="showTooltip('Kirim Pesan (C)', 'Status aktif/tidaknya device ini untuk mengirim pesan blast atau broadcast otomatis.')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+            </label>
+            <select id="dev-col-2" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none cursor-pointer">
+                <option value="ON">ON</option>
+                <option value="OFF">OFF</option>
+                <option value="Device OFF">Device OFF</option>
+            </select>
+        </div>
+        
+        <!-- Set Rasio -->
+        <div>
+            <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
+                Set Rasio (Z)
+                <svg onclick="showTooltip('Set Rasio Tier 1 (Z)', 'Persentase batas Rasio pesan keluar dan pesan masuk harian. Cara kerjanya jika ada 10 pesan masuk maka sistem akan mengirim 5 pesan broadcast ke costumer. Rasio paling aman saat ini menggunakan 2:1 (50%), admin bisa bereksperimen memulai menggunakan angka 50% selama 7 hari, ternyata tidak diblokir maka bisa dinaikan menjadi 55%. Namun jika terkena pemblokiran maka rasio diatur agar lebih rendah dari 50% menjadi 25%')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+            </label>
+            <input type="text" id="dev-col-25" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none">
+        </div>
+
+        <div>
+            <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
+                Day Tier 2 (B23)
+                <svg onclick="showTooltip('Set Day Rasio Tier 2 (B23)', 'Day Tier 2', 'Rasio cadangan / tier 2 untuk mengantisipasi algoritma whatsapp yang juga menghitung berapa jumlah pesan keluar dan masuk setiap nomor selama 30 hari terakhir.')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+            </label>
+            <input type="text" id="send-6" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none">
+        </div>
+
+        <div>
+            <label class="block text-[10px] font-bold text-[#008069] uppercase mb-1 flex items-center gap-1 w-fit">
+                Rasio Tier 2 (B24)
+                <svg onclick="showTooltip('Set Rasio Tier 2 (B24)', 'Persentase beban kirim untuk nomor yang masuk kategori Tier 2. Jika diisi 0% maka Rasio Tier2 akan berstatus tidak aktif. Saran kami gunakan 50% selama 30 hari kedepan jika aman baru turunkan menjadi 25%, jika masih aman baru ditulis 0%.')" width="13" height="13" fill="currentColor" class="text-gray-400 hover:text-[#008069] transition-colors cursor-pointer" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M5.255 5.786a.237.237 0 0 0 .241.247h.825c.138 0 .248-.113.266-.25.09-.656.54-1.134 1.342-1.134.686 0 1.314.343 1.314 1.168 0 .635-.374.927-.965 1.371-.673.489-1.206 1.06-1.168 1.987l.003.217a.25.25 0 0 0 .25.246h.811a.25.25 0 0 0 .25-.25v-.105c0-.718.273-.927 1.01-1.486.609-.463 1.244-.977 1.244-2.056 0-1.511-1.276-2.241-2.673-2.241-1.267 0-2.655.59-2.75 2.286zm1.557 5.763c0 .533.425.927 1.01.927.609 0 1.028-.394 1.028-.927 0-.552-.42-.94-1.029-.94-.584 0-1.009.388-1.009.94z"/></svg>
+            </label>
+            <input type="text" id="send-7" class="w-full border p-2 rounded text-sm bg-green-50 focus:border-[#008069] outline-none">
+        </div>
+
+    <!-- BLOK KODE BARU: TABEL BANK CONTENT -->
+    <div class="mt-6 border-t border-gray-200 pt-4 mb-2">
+        <div class="flex justify-between items-center mb-2">
+            <label class="block text-[10px] font-bold text-[#008069] uppercase flex items-center gap-1 w-fit">
+                🏦 Daftar Bank Content (Spin Text & Media)
+            </label>
+            <button onclick="addBankContentRow()" type="button" class="bg-green-100 text-green-700 hover:bg-green-200 px-3 py-1.5 rounded-lg text-[10px] font-bold transition-colors shadow-sm">+ Tambah Konten</button>
+        </div>
+        
+        <div class="overflow-x-auto custom-scrollbar border border-gray-200 rounded-lg">
+            <table class="w-full text-left min-w-[500px]">
+                <thead class="bg-gray-50">
+                    <tr class="text-[9px] font-black text-gray-500 uppercase tracking-wider border-b border-gray-200">
+                        <th class="p-2 w-1/5">Akun CS (B)</th>
+                        <th class="p-2 w-2/5">Materi Spin Text (C)</th>
+                        <th class="p-2 w-1/5">Link Gambar (D)</th>
+                        <th class="p-2 w-1/5 text-center">Aksi</th>
+                    </tr>
+                </thead>
+                <tbody id="bank-content-tbody" class="divide-y divide-gray-100 bg-white">
+                    <!-- Javascript akan me-render data ke sini otomatis -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+  </div>
+</div>
+    
+  
+</div>
+      <div class="flex gap-3 mt-5 pt-4 border-t shrink-0">
             <button onclick="closeDevForm()" class="flex-1 bg-gray-200 text-gray-700 py-3 rounded-lg text-sm font-bold hover:bg-gray-300 transition-colors">Batal</button>
             <button id="btn-save-dev" onclick="saveDevData()" class="flex-1 bg-[#00a884] text-white py-3 rounded-lg text-sm font-bold shadow-md hover:bg-[#008f6f] transition-colors">Simpan Semua Perubahan</button>
         </div>
@@ -3045,7 +3507,6 @@ function openEditModal() {
                     <!-- BLOK KODE BARU: Toggle Logo Dashboard Utama -->
                     <div class="flex justify-between items-center bg-gray-50 p-2.5 rounded-lg border border-gray-100">
                          <span class="text-xs font-bold text-gray-700">Logo Laporan</span>
-                        <label class="switch switch-blue scale-90">
                              <label class="switch scale-90"><input type="checkbox" checked onchange="document.getElementById('dash-logo-container').classList.toggle('hidden', !this.checked)">
                             <span class="slider"></span>
                         </label>
@@ -3069,20 +3530,22 @@ function openEditModal() {
                         <label class="switch scale-90"><input type="checkbox" checked onchange="document.getElementById('card-saldo').classList.toggle('hidden', !this.checked)"><span class="slider"></span></label>
                     </div>
 
+                     <div class="flex justify-between items-center bg-gray-50 p-2.5 rounded-lg border border-gray-100">
+                        <span class="text-xs font-bold text-gray-700">Analisa (Bulan Masuk)</span>
+                        <label class="switch scale-90"><input type="checkbox" checked onchange="document.getElementById('card-top-bulan-in').classList.toggle('hidden', !this.checked)"><span class="slider"></span></label>
+                    </div>
+
+                     <div class="flex justify-between items-center bg-gray-50 p-2.5 rounded-lg border border-gray-100">
+                        <span class="text-xs font-bold text-gray-700">Analisa (Bulan Keluar)</span>
+                        <label class="switch scale-90"><input type="checkbox" checked onchange="document.getElementById('card-top-bulan-out').classList.toggle('hidden', !this.checked)"><span class="slider"></span></label>
+                    </div>
+
+                     <div class="flex justify-between items-center bg-gray-50 p-2.5 rounded-lg border border-gray-100">
+                        <span class="text-xs font-bold text-gray-700">Analisa (Bulan Saldo)</span>
+                        <label class="switch scale-90"><input type="checkbox" checked onchange="document.getElementById('card-top-bulan-saldo).classList.toggle('hidden', !this.checked)"><span class="slider"></span></label>
+                        </div>
+
                     <!-- Menu Analisa Diset OFF (Tanpa "checked") -->
-                    <div class="flex justify-between items-center bg-green-50 p-2.5 rounded-lg border border-green-100">
-                        <span class="text-xs font-bold text-green-800">Analisa (Bulan Masuk)</span>
-                        <label class="switch switch-blue scale-90"><input type="checkbox" onchange="document.getElementById('card-top-bulan-in').classList.toggle('hidden', !this.checked)"><span class="slider"></span></label>
-                    </div>
-                    <div class="flex justify-between items-center bg-red-50 p-2.5 rounded-lg border border-red-100">
-                        <span class="text-xs font-bold text-red-800">Analisa (Bulan Keluar)</span>
-                        <label class="switch switch-blue scale-90"><input type="checkbox" onchange="document.getElementById('card-top-bulan-out').classList.toggle('hidden', !this.checked)"><span class="slider"></span></label>
-                    </div>
-                    <div class="flex justify-between items-center bg-purple-50 p-2.5 rounded-lg border border-purple-100">
-                        <span class="text-xs font-bold text-purple-800">Analisa (Bulan Saldo)</span>
-                        <label class="switch switch-blue scale-90"><input type="checkbox" onchange="document.getElementById('card-top-bulan-saldo').classList.toggle('hidden', !this.checked)"><span class="slider"></span></label>
-                    </div>
-                
                     <div class="flex justify-between items-center bg-gray-50 p-2.5 rounded-lg border border-gray-100">
                         <span class="text-xs font-bold text-gray-700">Analisa (Status)</span>
                         <label class="switch scale-90"><input type="checkbox" onchange="document.getElementById('card-top-status').classList.toggle('hidden', !this.checked)"><span class="slider"></span></label>
@@ -3337,11 +3800,37 @@ function populateFilterOptions() {
 
     let setAkun = new Set(), setAgen = new Set(), setJenis = new Set(), setKategori = new Set(), setBulan = new Set();
     
+    // blok kode baru
     financeDataCache.forEach(item => {
         const row = item.values || item;
         if (row && row.length > 0) {
-            if(row[1]) setAkun.add(String(row[1]).trim());
-            if(row[2]) setAgen.add(String(row[2]).trim());
+            const akun = String(row[1] || "").trim();
+            const agen = String(row[2] || "").trim();
+            
+            // --- FILTER ROLE OTOMATIS ---
+            if (!isMasterAdmin) {
+                let isAllowed = false;
+                
+                if (typeof isCS !== 'undefined' && isCS) {
+                    // Filter Khusus CS: Ambil Nama CS/Agen (Kolom B) dari cache virtual device 
+                    const allowedCSNames = deviceCache.map(d => String(d.fullRow[1] || "").toLowerCase().trim());
+                    if (allowedCSNames.includes(agen.toLowerCase()) || allowedCSNames.includes(akun.toLowerCase())) {
+                        isAllowed = true;
+                    }
+                } else {
+                    // Admin biasa: Cocokkan role akun dengan userAllowedAccounts
+                    if (userAllowedAccounts.includes(akun) || userAllowedAccounts.includes(agen)) {
+                        isAllowed = true;
+                    }
+                }
+                
+                // Jika tidak diizinkan, lewati baris ini agar tabel/grafik aman dari bocor data
+                if (!isAllowed) return; 
+            }
+            // ------------------------------
+
+            if(akun) setAkun.add(akun);
+            if(agen) setAgen.add(agen);
             if(row[6]) setJenis.add(String(row[6]).trim());
             if(row[7]) setKategori.add(String(row[7]).trim());
             if(row[21]) setBulan.add(String(row[21]).trim());
@@ -3502,16 +3991,37 @@ function resetFinanceFilters() {
         let aggStatus = {}, aggJenis = {}, aggKategori = {};
         let aggAkun = {}, aggAgen = {}, aggIdnet = {}; // Wadah baru
         let aggBulanIn = {}, aggBulanOut = {}, aggBulanSaldo = {}; // [BARU] Wadah agregat Bulan
-
         financeDataCache.forEach(item => {
             const row = item.values || item;
             if (!row || row.length < 13) return; 
-
             const rowIndex = item.rowIndex || 0;
             const tgl = String(row[8] || "-"); 
             const akun = String(row[1] || "-");
             const agen = String(row[2] || "-");
             const konsumen = String(row[4] || "-");
+            
+            // --- FILTER ROLE OTOMATIS ---
+            if (!isMasterAdmin) {
+                let isAllowed = false;
+                
+                if (typeof isCS !== 'undefined' && isCS) {
+                    // Filter Khusus CS: Ambil Nama CS/Agen (Kolom B) dari cache virtual device 
+                    const allowedCSNames = deviceCache.map(d => String(d.fullRow[1] || "").toLowerCase().trim());
+                    if (allowedCSNames.includes(agen.toLowerCase()) || allowedCSNames.includes(akun.toLowerCase())) {
+                        isAllowed = true;
+                    }
+                } else {
+                    // Admin biasa: Cocokkan role akun dengan userAllowedAccounts
+                    if (userAllowedAccounts.includes(akun) || userAllowedAccounts.includes(agen)) {
+                        isAllowed = true;
+                    }
+                }
+                
+                // Jika tidak diizinkan, lewati baris ini agar tabel/grafik aman dari bocor data
+                if (!isAllowed) return; 
+            }
+            // ------------------------------
+            
             const idNetworking = String(row[3] || "");
             const statusRaw = String(row[5] || "");
             const statLower = statusRaw.toLowerCase();
@@ -3628,6 +4138,10 @@ function resetFinanceFilters() {
             }
             
             // Tambahkan "this" ke dalam onchange agar sistem tahu elemen mana yang diklik
+            // Evaluasi role: Jika BUKAN CS (berarti Admin/Master), render elemen option Delete
+            let optionDelete = !isCS ? `<option value="Delete" class="text-red-600 font-bold">🗑️ Hapus Baris</option>` : "";
+
+            // Tambahkan "this" ke dalam onchange agar sistem tahu elemen mana yang diklik
             let btnQuick = `<select onchange="updateFinanceStatus('${rowIndex}', this.value, this)" class="text-[9px] border border-gray-200 rounded p-1 ml-1 bg-gray-50 cursor-pointer outline-none shadow-sm">
                 <option value="">Aksi</option>
                 <option value="Pemasukan">Pemasukan</option>
@@ -3637,7 +4151,7 @@ function resetFinanceFilters() {
                 <option value="Reject">Reject</option>
                 <option value="Edit" class="text-blue-600 font-bold">✏️ Edit Data</option>  
                 <option value="PrintInvoice" class="text-[#008069] font-bold">🖨️ Cetak Invoice</option>             
-                <option value="Delete" class="text-red-600 font-bold">🗑️ Hapus Baris</option>
+                ${optionDelete}
             </select>`;
             // TABEL DATA UTAMA (Responsive: Card di HP, Tabel di Desktop)
             htmlBuilder.push(`
@@ -3755,9 +4269,9 @@ function resetFinanceFilters() {
                 });
 
                 htmlBuilder.push(`
-                    <tr class="border-b border-gray-200 bg-gray-50/40">
-                        <td colspan="8" class="p-0">
-                            <div class="ml-[70px] sm:ml-[110px] mr-4 mb-4 mt-1 pb-1">
+                    <tr class="block md:table-row border-b border-l border-r border-gray-200 md:border-0 md:border-b md:border-gray-100 bg-gray-50/40 md:bg-gray-50/40 mb-5 md:mb-0 shadow-md md:shadow-none rounded-b-2xl md:rounded-none">
+                        <td colspan="8" class="block md:table-cell p-0">
+                            <div class="px-3 md:px-0 md:ml-[70px] sm:ml-[110px] md:mr-4 mb-4 mt-2 md:mt-1 pb-1">
                                 <div class="border border-dashed border-gray-300 rounded-lg overflow-hidden bg-white shadow-sm">
                                     <div class="bg-gray-100/80 border-b border-gray-200 px-3 py-1.5 flex items-center gap-1.5">
                                         <span class="text-[9px] font-black text-gray-500 uppercase tracking-widest">↳ Rincian Produk</span>
@@ -4120,6 +4634,19 @@ function resetFinanceFilters() {
         populateDropdown('edit-fin-jenisa', getUniqueOptions(6), "");
         populateDropdown('edit-fin-jenisb', getUniqueOptions(7), "");
 
+        // --- BLOK KODE BARU: Buka Kunci Form Saat Mode Tambah Baru ---
+        const inputAkun = document.getElementById('edit-fin-akun');
+        const inputAgen = document.getElementById('edit-fin-agen');
+        if (inputAkun) {
+            inputAkun.disabled = false;
+            inputAkun.classList.remove('bg-gray-200', 'cursor-not-allowed', 'opacity-70');
+        }
+        if (inputAgen) {
+            inputAgen.disabled = false;
+            inputAgen.classList.remove('bg-gray-200', 'cursor-not-allowed', 'opacity-70');
+        }
+        // --------------------------------------------------------------
+
         // 3. Kosongkan inputan teks/angka
         const setVal = (id, val) => { const el = document.getElementById(id); if(el) el.value = val; };
         setVal('edit-fin-idnet', "");
@@ -4134,9 +4661,13 @@ function resetFinanceFilters() {
         setVal('edit-fin-tgl', today);
         generateBulanFinance();
 
-        // 5. Sembunyikan Area Gambar
-        const imageContainer = document.getElementById('edit-fin-image-container');
-        if (imageContainer) imageContainer.classList.add('hidden');
+        // 5. Reset Image Upload State & Tampilkan Mode Placeholder
+        financeSelectedFile = null;
+        document.getElementById('fin-upload-bukti').value = "";
+        document.getElementById('edit-fin-image-container').classList.remove('hidden');
+        document.getElementById('edit-fin-image-preview').classList.add('hidden');
+        document.getElementById('edit-fin-image-link').classList.add('hidden');
+        document.getElementById('fin-placeholder-img').classList.remove('hidden');
 
         // 6. Matikan Multi-Item & Reset Angka
         document.getElementById('toggle-multi-item').checked = false;
@@ -4175,6 +4706,11 @@ function resetFinanceFilters() {
         calculateTotalFinance();
     }
 
+    // --- FUNGSI PEMANTIK DISKON ---
+    function addDiscountRow() {
+        addMultiItemRow('Diskon Event', 10, '%', 0); // Default diskon 10%
+    }
+
     function addMultiItemRow(nama = '', qty = 1, satuan = 'Pcs', harga = 0) {
         const id = Date.now() + Math.random();
         multiItemData.push({ id, nama, qty, satuan, harga });
@@ -4184,14 +4720,17 @@ function resetFinanceFilters() {
         tr.dataset.id = id;
         tr.className = "hover:bg-blue-50/50 transition-colors";
         
+        // Deteksi awal jika ini adalah baris diskon
+        const isDiskon = satuan === '%';
+        const readOnlyAttr = isDiskon ? 'readonly title="Dihitung Otomatis"' : '';
+        const bgHargaClass = isDiskon ? 'bg-gray-100 text-gray-500' : 'bg-white text-gray-800';
         const subtotal = (parseFloat(qty) || 0) * (parseFloat(harga) || 0);
         
-        // Gunakan oninput dengan DOM Traversal agar tidak kehilangan fokus saat mengetik
         tr.innerHTML = `
             <td class="py-1.5 pr-1"><input type="text" value="${nama}" placeholder="Nama Item" class="multi-nama w-full text-xs p-1.5 border border-gray-200 rounded outline-none focus:border-[#008069]" oninput="syncRowData(this)"></td>
             <td class="py-1.5 pr-1"><input type="number" value="${qty}" class="multi-qty w-full text-xs p-1.5 border border-gray-200 rounded outline-none focus:border-[#008069] text-center" oninput="syncRowData(this)"></td>
-            <td class="py-1.5 pr-1"><input type="text" value="${satuan}" placeholder="Pcs/Kg" class="multi-satuan w-full text-xs p-1.5 border border-gray-200 rounded outline-none focus:border-[#008069]" oninput="syncRowData(this)"></td>
-            <td class="py-1.5 pr-1"><input type="number" value="${harga}" class="multi-harga w-full text-xs p-1.5 border border-gray-200 rounded outline-none focus:border-[#008069]" oninput="syncRowData(this)"></td>
+            <td class="py-1.5 pr-1"><input type="text" value="${satuan}" placeholder="Pcs/Kg/%" class="multi-satuan w-full text-xs p-1.5 border border-gray-200 rounded outline-none focus:border-[#008069]" oninput="syncRowData(this)"></td>
+            <td class="py-1.5 pr-1"><input type="number" value="${harga}" class="multi-harga w-full text-xs p-1.5 border border-gray-200 rounded outline-none focus:border-[#008069] ${bgHargaClass}" ${readOnlyAttr} oninput="syncRowData(this)"></td>
             <td class="py-1.5 text-right font-bold text-gray-700 text-[11px] multi-subtotal">Rp ${formatRupiah(subtotal)}</td>
             <td class="py-1.5 pl-1 text-center"><button onclick="removeMultiItemRow(${id}, this)" class="text-red-400 hover:text-red-600 font-bold bg-white border border-red-100 rounded px-2 py-1 shadow-sm transition-colors" title="Hapus">✕</button></td>
         `;
@@ -4211,28 +4750,31 @@ function resetFinanceFilters() {
         
         const nama = tr.querySelector('.multi-nama').value;
         const qty = parseFloat(tr.querySelector('.multi-qty').value) || 0;
-        const satuan = tr.querySelector('.multi-satuan').value;
-        const harga = parseFloat(tr.querySelector('.multi-harga').value) || 0;
+        const satuan = tr.querySelector('.multi-satuan').value.trim(); // Trim mencegah spasi
+        let harga = parseFloat(tr.querySelector('.multi-harga').value) || 0;
+        const hargaInput = tr.querySelector('.multi-harga');
         
-        // Kalkulasi Subtotal Lokal & Update Teks
-        const subtotal = qty * harga;
-        tr.querySelector('.multi-subtotal').innerText = 'Rp ' + formatRupiah(subtotal);
-        
-        // Simpan ke Array State
         const item = multiItemData.find(i => i.id === id);
         if(item) {
             item.nama = nama;
             item.qty = qty;
             item.satuan = satuan;
-            item.harga = harga;
+            
+            // KUNCI: Lock field Harga jika user mengubah Satuan menjadi % secara manual
+            if(satuan === '%') {
+                hargaInput.readOnly = true;
+                hargaInput.classList.add('bg-gray-100', 'text-gray-500');
+            } else {
+                item.harga = harga; // Update harga hanya jika bukan diskon
+                hargaInput.readOnly = false;
+                hargaInput.classList.remove('bg-gray-100', 'text-gray-500');
+            }
         }
         
-        // Kalkulasi Total Global
+        // Panggil Master Hitung agar matematika diskon diselesaikan secara global
         calculateTotalFinance();
     }
 
-    // Buka Modal Edit
-    // Buka Modal Edit
     function openEditFinanceForm(rowIndex) {
         const rowDataRaw = financeDataCache.find(item => String(item.rowIndex) === String(rowIndex));
         if (!rowDataRaw) { showToast("Gagal memuat data baris ini."); return; }
@@ -4246,19 +4788,52 @@ function resetFinanceFilters() {
         populateDropdown('edit-fin-jenisa', getUniqueOptions(6), row[6]);
         populateDropdown('edit-fin-jenisb', getUniqueOptions(7), row[7]);
 
+        // --- BLOK KODE BARU: Validasi Akses CS untuk Kolom B (Akun) & C (Agen) ---
+        const inputAkun = document.getElementById('edit-fin-akun');
+        const inputAgen = document.getElementById('edit-fin-agen');
+        
+        // Cek apakah data sebelumnya ada dan bukan sekadar tanda strip "-"
+        const existingAkun = (row[1] && String(row[1]).trim() !== "-") ? String(row[1]).trim() : "";
+        const existingAgen = (row[2] && String(row[2]).trim() !== "-") ? String(row[2]).trim() : "";
+
+        if (typeof isCS !== 'undefined' && isCS) {
+            // Kunci input jika data sudah ada isinya
+            inputAkun.disabled = (existingAkun !== "");
+            inputAgen.disabled = (existingAgen !== "");
+            
+            // Beri efek visual abu-abu agar CS tahu form ini terkunci
+            if (existingAkun !== "") inputAkun.classList.add('bg-gray-200', 'cursor-not-allowed', 'opacity-70');
+            else inputAkun.classList.remove('bg-gray-200', 'cursor-not-allowed', 'opacity-70');
+            
+            if (existingAgen !== "") inputAgen.classList.add('bg-gray-200', 'cursor-not-allowed', 'opacity-70');
+            else inputAgen.classList.remove('bg-gray-200', 'cursor-not-allowed', 'opacity-70');
+        } else {
+            // Jika Master/Admin, pastikan kunci selalu terbuka bebas
+            inputAkun.disabled = false;
+            inputAgen.disabled = false;
+            inputAkun.classList.remove('bg-gray-200', 'cursor-not-allowed', 'opacity-70');
+            inputAgen.classList.remove('bg-gray-200', 'cursor-not-allowed', 'opacity-70');
+        }
+        // -------------------------------------------------------------------------
+
         const setVal = (id, val) => { document.getElementById(id).value = (val === "-" ? "" : val); };
         
         // 1. Ambil value asli dari row[3]
         let rawValue = row[3]; // Contoh: "628152203692.@admin62895335547010"
 
-         // 2. Bersihkan value (ambil hanya angka sebelum titik atau @)
-        let waClean = rawValue.split('.')[0]; // Hasilnya: "628152203692"
+        // 2. Bersihkan value (ambil hanya angka sebelum titik/ekstensi untuk personal)
+        let waClean = rawValue;
+        if (rawValue.includes('@g.us')) {
+            waClean = rawValue.split('@g.us')[0] + '@g.us'; // Pertahankan ekstensi grup
+        } else {
+            waClean = rawValue.split('.')[0].replace(/\D/g, ''); // Ambil hanya angka HP
+        }
 
-        // 3. Buat link WhatsApp
-        let waLink = `https://wa.me/${waClean}`; // Hasilnya: "https://wa.me/628152203692"
+        // 3. Buat link WhatsApp (Abaikan jika itu ID Grup)
+        let waLink = `https://wa.me/${waClean.replace('@g.us', '')}`; 
 
         // 4. Set valuenya ke masing-masing field
-        setVal('edit-fin-idnet', rawValue);
+        setVal('edit-fin-idnet', waClean); // <-- HANYA TAMPILKAN NOMOR WA AGAR AMAN DIEDIT
         setVal('edit-fin-wa-link', waLink);
         setVal('edit-fin-konsumen', row[4]);
         setVal('edit-fin-item', row[9]); // Kolom J (Nama Item / Judul)
@@ -4291,17 +4866,24 @@ function resetFinanceFilters() {
         const imageContainer = document.getElementById('edit-fin-image-container');
         const imagePreview = document.getElementById('edit-fin-image-preview');
         const imageLinkBtn = document.getElementById('edit-fin-image-link');
+        const imagePlaceholder = document.getElementById('fin-placeholder-img');
+        
+        financeSelectedFile = null; 
+        document.getElementById('fin-upload-bukti').value = "";
+        imageContainer.classList.remove('hidden'); // Paksa panel kiri selalu tampil
         
         if (linkBukti && linkBukti !== "-" && linkBukti !== "#" && isImageUrl(linkBukti)) {
-            // Gunakan fungsi yang sudah ada untuk konversi link thumbnail
             const imgSrc = getEmbeddableImageUrl(linkBukti);
             imagePreview.src = imgSrc;
+            imagePreview.classList.remove('hidden');
             imageLinkBtn.href = linkBukti;
-            imageContainer.classList.remove('hidden');
+            imageLinkBtn.classList.remove('hidden');
+            imagePlaceholder.classList.add('hidden'); // Sembunyikan ikon kamera
         } else {
             imagePreview.src = "";
-            imageLinkBtn.href = "#";
-            imageContainer.classList.add('hidden');
+            imagePreview.classList.add('hidden');
+            imageLinkBtn.classList.add('hidden');
+            imagePlaceholder.classList.remove('hidden'); // Tampilkan ikon kamera
         }
 
         // --- DETEKSI MULTI ITEM (KOLOM L) ---
@@ -4340,14 +4922,44 @@ function resetFinanceFilters() {
         document.getElementById('finance-edit-modal').classList.add('hidden');
     }
 
-    // Auto Kalkulasi Qty x Harga
+    // Auto Kalkulasi Qty x Harga (Diperbarui dengan Engine Diskon)
     function calculateTotalFinance() {
         const isMulti = document.getElementById('toggle-multi-item').checked;
         let total = 0;
         
         if (isMulti) {
+            // TAHAP 1: Hitung akumulasi subtotal produk normal (Bukan Diskon)
+            let totalNormal = 0;
             multiItemData.forEach(item => {
-                total += (parseFloat(item.qty) || 0) * (parseFloat(item.harga) || 0);
+                if (item.satuan !== '%') {
+                    totalNormal += (parseFloat(item.qty) || 0) * (parseFloat(item.harga) || 0);
+                }
+            });
+
+            // TAHAP 2: Injeksi Diskon & Kalkulasi Grand Total
+            total = totalNormal;
+            multiItemData.forEach(item => {
+                const tr = document.querySelector(`tr[data-id="${item.id}"]`);
+                
+                if (item.satuan === '%') {
+                    let qtyPersen = parseFloat(item.qty) || 0;
+                    // Harga per unit dibuat minus. Misal Total 100rb, Harga/1% nya adalah -1000.
+                    item.harga = (totalNormal / 100) * -1; 
+                    let subtotalDiskon = qtyPersen * item.harga;
+                    
+                    if(tr) {
+                        tr.querySelector('.multi-harga').value = item.harga;
+                        tr.querySelector('.multi-subtotal').innerText = 'Rp ' + formatRupiah(subtotalDiskon);
+                        tr.querySelector('.multi-subtotal').classList.add('text-red-600'); // Efek merah
+                    }
+                    total += subtotalDiskon;
+                } else {
+                    if(tr) {
+                        let sub = (parseFloat(item.qty) || 0) * (parseFloat(item.harga) || 0);
+                        tr.querySelector('.multi-subtotal').innerText = 'Rp ' + formatRupiah(sub);
+                        tr.querySelector('.multi-subtotal').classList.remove('text-red-600');
+                    }
+                }
             });
         } else {
             let qty = parseFloat(document.getElementById('edit-fin-qty').value) || 0;
@@ -4381,7 +4993,39 @@ function resetFinanceFilters() {
         outputBulan.value = `${yy}${mm} ${stringBulan}`;
     }
 
-    // blok kode baru
+// --- FUNGSI UPLOAD GAMBAR BASE64 FINANCE ---
+    let financeSelectedFile = null;
+    function handleFinanceBuktiUpload(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        
+        // Batas ukuran 3MB agar payload server Klien tidak jebol/timeout
+        if(file.size > 3 * 1024 * 1024) {
+             showToast("⚠️ Maksimal ukuran gambar adalah 3MB");
+             return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            financeSelectedFile = {
+                base64: e.target.result.split(',')[1], // Ambil string base64 murni
+                mimeType: file.type,
+                name: file.name
+            };
+            
+            // Render Live Preview
+            const imgPreview = document.getElementById('edit-fin-image-preview');
+            imgPreview.src = e.target.result;
+            imgPreview.classList.remove('hidden');
+            
+            // Sembunyikan placeholder dan tombol cek URL external
+            document.getElementById('fin-placeholder-img').classList.add('hidden');
+            document.getElementById('edit-fin-image-link').classList.add('hidden');
+        };
+        reader.readAsDataURL(file);
+    }
+
+
 function saveEditFinance() {
     const btn = document.getElementById('btn-save-edit-fin');
     const rowIndex = document.getElementById('edit-fin-row').value;
@@ -4429,24 +5073,40 @@ function saveEditFinance() {
             sheetTgl = `${pts[2]}/${pts[1]}/${pts[0]}`;
         }
 
+        // blok kode baru
+        // --- MANIPULASI PERAKITAN KEMBALI ID NETWORKING ---
+        let inputIdNet = document.getElementById('edit-fin-idnet').value.trim();
+        let inputAgen = document.getElementById('edit-fin-agen').value.trim();
+        let finalIdNet = inputIdNet;
+        
+        // Ekstrak hanya angka dari nama Agen yang dipilih (contoh: "Server Cabang 62895..." -> "62895...")
+        let nomorAgen = inputAgen.replace(/\D/g, ''); 
+
+        // Jika ID bukan format Grup dan nomor agen tersedia, gabungkan otomatis
+        if (inputIdNet !== "" && !inputIdNet.includes("@g.us") && nomorAgen !== "") {
+            let cleanPhone = inputIdNet.split('.')[0].replace(/\D/g, ''); // Bersihkan jika user typo masukin titik
+            finalIdNet = cleanPhone + ".@admin" + nomorAgen;
+        }
+
         const dataObj = {
-        colB: document.getElementById('edit-fin-akun').value,
-        colC: document.getElementById('edit-fin-agen').value,
-        colD: document.getElementById('edit-fin-idnet').value,
-        colE: document.getElementById('edit-fin-konsumen').value,
-        colF: document.getElementById('edit-fin-status').value,
-        colG: document.getElementById('edit-fin-jenisa').value,
-        colH: document.getElementById('edit-fin-jenisb').value,
-        colI: sheetTgl,
-        colJ: document.getElementById('edit-fin-item').value, 
-        colK: qty,
-        colL: satuan, 
-        colM: harga,
-        colN: total, 
-        colO: document.getElementById('edit-fin-note').value,
-        colR: invValue, // <-- Masukkan variabel yang sudah divalidasi ke sini
-        colV: document.getElementById('edit-fin-bulan').value
-    };
+            fileData: financeSelectedFile, // <-- INJEKSI DATA GAMBAR
+            colB: document.getElementById('edit-fin-akun').value,
+            colC: inputAgen,
+            colD: finalIdNet, // <-- ID DIKIRIM DALAM FORMAT SUDAH DIGABUNGKAN
+            colE: document.getElementById('edit-fin-konsumen').value,
+            colF: document.getElementById('edit-fin-status').value,
+            colG: document.getElementById('edit-fin-jenisa').value,
+            colH: document.getElementById('edit-fin-jenisb').value,
+            colI: sheetTgl,
+            colJ: document.getElementById('edit-fin-item').value, 
+            colK: qty,
+            colL: satuan, 
+            colM: harga,
+            colN: total, 
+            colO: document.getElementById('edit-fin-note').value,
+            colR: document.getElementById('edit-fin-inv').value,
+            colV: document.getElementById('edit-fin-bulan').value
+        };
 
         btn.innerHTML = `<div class="flex items-center justify-center gap-2"><div class="spinner-small"></div><span>Menyimpan...</span></div>`;
         btn.disabled = true;
@@ -4531,14 +5191,12 @@ function renderDashboardLogo() {
     }
 }
 
-// Integrasi rendering logo saat fungsi openInvoicePreview dipanggil
-// (Pastikan disematkan di dalam fungsi openInvoicePreview yang sudah ada)
 function openInvoicePreview(rowIndex) {
         const rowDataRaw = financeDataCache.find(item => String(item.rowIndex) === String(rowIndex));
         if (!rowDataRaw) { showToast("Gagal memuat data baris ini."); return; }
         const row = rowDataRaw.values || rowDataRaw;
         
-        // Ekstrak Data
+        // Ekstrak Data Dasar
         const tgl = row[8] || "-";
         const konsumen = row[4] || "Pelanggan Yth";
         // Pembersihan ID Networking
@@ -4598,7 +5256,76 @@ function openInvoicePreview(rowIndex) {
             `;
         }
 
-        // Render Kertas Invoice (Note otomatis disembunyikan / class hidden)
+        // ======================================================================
+        // PERBAIKAN: TARIK DATA REKENING & LOGO TERLEBIH DAHULU SEBELUM BIKIN HTML
+        // ======================================================================
+        let agenName = String(row[2] || "").trim(); // Ekstrak Agen dari Kolom C Finance
+        let devSetting = deviceCache.find(d => String(d.fullRow[0] || "").trim() === agenName);
+        
+        let savedRek = devSetting && devSetting.fullRow[27] ? devSetting.fullRow[27] : "";
+        let savedLogo = devSetting && devSetting.fullRow[28] ? devSetting.fullRow[28] : "";
+        let savedAlign = "center"; 
+        let savedSize = "100";
+        let logoHtml = "";
+        
+        // Injeksi Nomor Rekening jika status PENDING
+    let paymentInfoHtml = "";
+    if (String(row[5] || "").toLowerCase().includes("pending") && savedRek !== "") {
+        let formattedRek = savedRek.replace(/\n/g, '<br>');
+        paymentInfoHtml = `
+        <div class="w-full sm:w-1/2 md:w-1/2 bg-yellow-50 p-4 rounded-xl border border-yellow-200 text-left mb-6 sm:mb-0">
+            <p class="text-[10px] font-black text-yellow-700 uppercase tracking-wider mb-2">💳 Instruksi Pembayaran</p>
+            <p class="text-xs text-gray-800 font-mono leading-relaxed">${formattedRek}</p>
+            <p class="text-[9px] text-gray-500 mt-2 italic">*Harap konfirmasi jika sudah transfer.</p>
+        </div>
+        `;
+    }
+
+    // BLOK KODE BARU: LOGIKA BADGE STATUS (LUNAS / TAGIHAN / VERIFIED)
+    let statusRawStr = String(row[5] || "").toLowerCase();
+    let statusBadgeHtml = "";
+
+    if (statusRawStr.includes("pending")) {
+        statusBadgeHtml = `
+        <div class="mt-3 pt-3 border-t border-green-200/60 flex justify-between items-center">
+            <span class="text-[9px] font-bold text-green-800/70 uppercase tracking-widest">Status</span>
+            <span class="bg-orange-100 text-orange-600 border border-orange-200 px-2.5 py-0.5 rounded font-black text-[10px] uppercase tracking-widest shadow-sm flex items-center gap-1">
+                ⏳ TAGIHAN
+            </span>
+        </div>`;
+    } else if (statusRawStr.includes("pemasukan") || statusRawStr.includes("lunas") || statusRawStr.includes("omset")) {
+        statusBadgeHtml = `
+        <div class="mt-3 pt-3 border-t border-green-200/60 flex justify-between items-center">
+            <span class="text-[9px] font-bold text-green-800/70 uppercase tracking-widest">Status</span>
+            <span class="bg-green-600 text-white border border-green-700 px-2.5 py-0.5 rounded font-black text-[10px] uppercase tracking-widest shadow-sm flex items-center gap-1">
+                ✓ LUNAS
+            </span>
+        </div>`;
+    } else if (statusRawStr.includes("pengeluaran") || statusRawStr.includes("debit")) {
+        statusBadgeHtml = `
+        <div class="mt-3 pt-3 border-t border-green-200/60 flex justify-between items-center">
+            <span class="text-[9px] font-bold text-green-800/70 uppercase tracking-widest">Status</span>
+            <span class="bg-blue-100 text-blue-600 border border-blue-200 px-2.5 py-0.5 rounded font-black text-[10px] uppercase tracking-widest shadow-sm flex items-center gap-1">
+                ★ VERIFIED
+            </span>
+        </div>`;
+    }
+    // BATAS KODE BARU
+        
+        if (savedLogo !== "") {
+            let embedImg = getEmbeddableImageUrl(savedLogo);
+            let alignClass = "text-left";
+            let flexAlign = "justify-start";
+            if (savedAlign === "center") { alignClass = "text-center"; flexAlign = "justify-center"; }
+            if (savedAlign === "right") { alignClass = "text-right"; flexAlign = "justify-end"; }
+            
+            // Menambahkan id="invoice-logo-container" dan state tampilan awal
+            logoHtml = `<div id="invoice-logo-container" class="mb-6 flex ${flexAlign} ${!isInvoiceLogoVisible ? 'hidden' : ''}"><img src="${embedImg}" alt="Logo Perusahaan" style="max-height: ${savedSize}px;" class="object-contain" /></div>`;
+        }
+
+        // ======================================================================
+        // BARU RENDER KERTAS INVOICE SETELAH VARIABEL SIAP
+        // ======================================================================
         const html = `
             <div class="flex flex-col sm:flex-row justify-between items-start mb-6 sm:mb-8 gap-3 sm:gap-4 border-b border-gray-200 pb-4 sm:pb-6">
                 <div>
@@ -4639,17 +5366,29 @@ function openInvoicePreview(rowIndex) {
                 </table>
             </div>
             
-            <div class="flex justify-end mb-12">
-                <div class="w-full sm:w-1/2 md:w-1/3 bg-green-50 p-4 rounded-xl border border-green-100">
+            <div class="flex flex-col-reverse sm:flex-row justify-between mb-12 gap-4">
+                ${paymentInfoHtml}
+                <!-- BLOK KODE BARU: Penyuntikan statusBadgeHtml ke dalam Box Total -->
+                <div class="w-full ${paymentInfoHtml !== "" ? 'sm:w-1/2 md:w-1/3' : 'sm:w-1/2 md:w-1/3 ml-auto'} bg-green-50 p-4 rounded-xl border border-green-100 h-fit">
                     <div class="flex justify-between items-center">
                         <span class="font-bold text-green-800 uppercase tracking-wider text-xs">Total</span>
                         <span class="font-black text-xl text-[#008069]">Rp ${formatRupiah(total)}</span>
                     </div>
+                    ${statusBadgeHtml}
                 </div>
             </div>
-
-            <div id="invoice-note-display" class="mt-16 text-left hidden">
-                <p class="text-[10px] text-gray-400 bg-gray-50 inline-block px-3 py-1 rounded-md transition-all">Note: ${note}</p>
+            
+            <div id="invoice-note-display" class="mt-8 text-left hidden w-full">
+                <div class="bg-gray-50 border border-gray-200 rounded-xl p-4 shadow-sm w-full">
+                    <h4 class="text-[10px] font-black text-gray-500 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                        <svg width="12" height="12" fill="currentColor" viewBox="0 0 16 16">
+                            <path d="M1.5 0A1.5 1.5 0 0 0 0 1.5V13a1 1 0 0 0 1 1V1.5a.5.5 0 0 1 .5-.5H14a1 1 0 0 0-1-1H1.5z"/>
+                            <path d="M3.5 2A1.5 1.5 0 0 0 2 3.5v11A1.5 1.5 0 0 0 3.5 16h6.086a1.5 1.5 0 0 0 1.06-.44l4.915-4.914A1.5 1.5 0 0 0 16 9.586V3.5A1.5 1.5 0 0 0 14.5 2h-11zM3 3.5a.5.5 0 0 1 .5-.5h11a.5.5 0 0 1 .5.5V9h-4.5A1.5 1.5 0 0 0 9 10.5V15H3.5a.5.5 0 0 1-.5-.5v-11z"/>
+                        </svg>
+                        Catatan Tambahan
+                    </h4>
+                    <p class="text-xs text-gray-700 font-medium leading-relaxed whitespace-pre-wrap">${note}</p>
+                </div>
             </div>
             
             <div class="mt-16 text-center border-t border-gray-200 pt-6">
@@ -4658,43 +5397,26 @@ function openInvoicePreview(rowIndex) {
             </div>
         `;
 
-// blok kode baru: Integrasi Logo Dinamis ke Invoice Preview
-    let savedLogo = localStorage.getItem('omni_invoice_logo') || "";
-    let savedAlign = localStorage.getItem('omni_invoice_align') || "center";
-    let savedSize = localStorage.getItem('omni_invoice_size') || "60";
-    let logoHtml = "";
-    
-    if (savedLogo !== "") {
-        let embedImg = getEmbeddableImageUrl(savedLogo);
-        let alignClass = "text-left";
-        let flexAlign = "justify-start";
-        if (savedAlign === "center") { alignClass = "text-center"; flexAlign = "justify-center"; }
-        if (savedAlign === "right") { alignClass = "text-right"; flexAlign = "justify-end"; }
-        
-        // Menambahkan id="invoice-logo-container" dan state tampilan awal (hidden) jika isInvoiceLogoVisible false
-        logoHtml = `<div id="invoice-logo-container" class="mb-6 flex ${flexAlign} ${!isInvoiceLogoVisible ? 'hidden' : ''}"><img src="${embedImg}" alt="Logo Perusahaan" style="max-height: ${savedSize}px;" class="object-contain" /></div>`;
-    }
-
-    // Sinkronisasi status tombol dengan variabel global isInvoiceLogoVisible
-    const btnLogoText = document.getElementById('btn-logo-text');
-    const btnElement = document.getElementById('btn-toggle-invoice-logo');
-    if (btnLogoText && btnElement) {
-        if (isInvoiceLogoVisible) {
-            btnLogoText.innerText = "Sembunyikan Logo";
-            btnElement.classList.replace('bg-gray-500', 'bg-indigo-500');
-            btnElement.classList.replace('hover:bg-gray-600', 'hover:bg-indigo-600');
-        } else {
-            btnLogoText.innerText = "Tampilkan Logo";
-            btnElement.classList.replace('bg-indigo-500', 'bg-gray-500');
-            btnElement.classList.replace('hover:bg-indigo-600', 'hover:bg-gray-600');
+        // Sinkronisasi status tombol
+        const btnLogoText = document.getElementById('btn-logo-text');
+        const btnElement = document.getElementById('btn-toggle-invoice-logo');
+        if (btnLogoText && btnElement) {
+            if (isInvoiceLogoVisible) {
+                btnLogoText.innerText = "Sembunyikan Logo";
+                btnElement.classList.replace('bg-gray-500', 'bg-indigo-500');
+                btnElement.classList.replace('hover:bg-gray-600', 'hover:bg-indigo-600');
+            } else {
+                btnLogoText.innerText = "Tampilkan Logo";
+                btnElement.classList.replace('bg-indigo-500', 'bg-gray-500');
+                btnElement.classList.replace('hover:bg-indigo-600', 'hover:bg-gray-600');
+            }
         }
+        
+        const finalInvoiceHtml = logoHtml + html;
+        document.getElementById('invoice-content').innerHTML = finalInvoiceHtml;
+        document.getElementById('invoice-preview-modal').classList.remove('hidden');
+        document.body.classList.add('print-invoice-mode');
     }
-    
-    const finalInvoiceHtml = logoHtml + html;
-    document.getElementById('invoice-content').innerHTML = finalInvoiceHtml;
-    document.getElementById('invoice-preview-modal').classList.remove('hidden');
-    document.body.classList.add('print-invoice-mode');
-}
 
     function closeInvoicePreview() {
         document.getElementById('invoice-preview-modal').classList.add('hidden');
@@ -4760,6 +5482,129 @@ function openInvoicePreview(rowIndex) {
             btnElement.classList.replace('bg-indigo-500', 'bg-gray-500');
             btnElement.classList.replace('hover:bg-indigo-600', 'hover:bg-gray-600');
         }
+    }
+
+// =========================================================================
+    // ENGINE: MANAJEMEN BANK CONTENT LOKAL (PIGGYBACK CACHING)
+    // =========================================================================
+    let globalBankContentCache = [];
+    let currentBankContentAkun = "";
+
+    // MENGAMBIL CACHE SAAT PANEL DEVICE TERBUKA
+    // Pemicu 1: Cari baris -> document.getElementById('config-loading').classList.add('hidden'); (di dalam openDevicePanel) dan tambahkan:
+    // globalBankContentCache = data.bankContent || [];
+    
+    // PEMICU 2: Buka file omniUI.html, temukan fungsi editDevForm(idx). Di baris akhirnya tepat sebelum document.getElementById('dev-modal').classList.remove('hidden'); tambahkan:
+    // currentBankContentAkun = String(rowData[1] || "").trim();
+    // renderBankContentUI();
+
+    function renderBankContentUI() {
+        const tbody = document.getElementById('bank-content-tbody');
+        if (!tbody) return;
+        tbody.innerHTML = "";
+        
+        // VLOOKUP VIRTUAL: Filter berdasar Akun Device (Kolom B)
+        const filtered = globalBankContentCache.filter(b => b.akun === currentBankContentAkun);
+        
+        if (filtered.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="4" class="py-4 text-center text-[10px] text-gray-400 italic font-bold">Belum ada daftar Bank Content yang terkait dengan Akun ini.</td></tr>`;
+            return;
+        }
+        
+        filtered.forEach(item => {
+            tbody.innerHTML += `
+            <tr class="hover:bg-gray-50 transition-colors">
+                <td class="p-2 align-top"><input type="text" value="${item.akun}" readonly class="w-full text-[10px] p-2 bg-gray-100 border border-gray-200 rounded text-gray-500 cursor-not-allowed"></td>
+                <td class="p-2 align-top"><textarea rows="2" id="bc-materi-${item.row}" class="w-full text-[10px] p-2 border border-gray-200 rounded outline-none focus:border-[#008069] resize-none">${item.materi}</textarea></td>
+                <td class="p-2 align-top"><input type="text" id="bc-link-${item.row}" value="${item.link}"  placeholder="URL Link GDrive Gambar..." class="w-full text-[10px] p-2 border border-green-300 rounded outline-none focus:border-[#008069] shadow-inner"></td>
+                <td class="p-2 text-center align-top">
+                    <div class="flex justify-center gap-1.5 mt-1">
+                        <button type="button" onclick="saveBankContentRow('${item.row}', this)" class="text-[9px] bg-[#008069] text-white hover:bg-green-700 font-bold px-3 py-1.5 rounded shadow-sm">Simpan</button>
+                        <button type="button" onclick="deleteBankContentRow('${item.row}', this)" class="text-[9px] bg-gray-200 text-gray-600 hover:bg-gray-300 font-bold px-2 py-1.5 rounded shadow-sm">Hapus</button>
+                    </div>
+                </td>
+            </tr>`;
+        });
+    }
+
+    function addBankContentRow() {
+        if (!currentBankContentAkun || currentBankContentAkun === "") {
+            showToast("⚠️ Akun CS kosong! Harap isi Akun CS (B) di atas lalu 'Simpan' device ini terlebih dahulu.");
+            return;
+        }
+        const tbody = document.getElementById('bank-content-tbody');
+        if(tbody.innerHTML.includes("Belum ada daftar")) tbody.innerHTML = ""; // Bersihkan placeholder
+        
+        const newId = "NEW";
+        const tr = document.createElement('tr');
+        tr.className = "hover:bg-green-50 bg-green-50/30 transition-colors";
+        tr.innerHTML = `
+            <td class="p-2 align-top"><input type="text" value="${currentBankContentAkun}" readonly class="w-full text-[10px] p-2 bg-gray-100 border border-green-200 rounded text-green-700 font-bold cursor-not-allowed"></td>
+            <td class="p-2 align-top"><textarea rows="2" id="bc-materi-${newId}" placeholder="Ketik materi broadcast/spin text..." class="w-full text-[10px] p-2 border border-green-300 rounded outline-none focus:border-[#008069] resize-none shadow-inner"></textarea></td>
+            <td class="p-2 align-top"><input type="text" id="bc-link-${newId}" placeholder="URL Link GDrive Gambar..." class="w-full text-[10px] p-2 border border-green-300 rounded outline-none focus:border-[#008069] shadow-inner"></td>
+            <td class="p-2 text-center align-top">
+                    <div class="flex justify-center gap-1.5 mt-1">
+                        <button type="button" onclick="saveBankContentRow('${newId}', this)" class="text-[9px] bg-[#008069] text-white hover:bg-green-700 font-bold px-3 py-1.5 rounded shadow-sm">Add</button>
+                        <button type="button" onclick="this.closest('tr').remove()" class="text-[9px] bg-gray-200 text-gray-600 hover:bg-gray-300 font-bold px-2 py-1.5 rounded shadow-sm">Batal</button>
+                    </div>
+            </td>
+        `;
+        tbody.appendChild(tr); // Render ditaruh di urutan paling bawah (last child)
+    }
+
+    function saveBankContentRow(rowId, btnEl) {
+        const oldText = btnEl.innerText;
+        btnEl.innerHTML = `<div class="spinner-small" style="width:10px;height:10px;border-width:2px;border-top-color:currentColor;"></div>`;
+        btnEl.disabled = true;
+        
+        const materi = document.getElementById('bc-materi-' + rowId).value;
+        const link = document.getElementById('bc-link-' + rowId).value;
+        const akun = currentBankContentAkun;
+        
+        google.script.run
+        .withSuccessHandler(res => {
+            showToast("✅ " + res);
+            btnEl.innerText = "✓ OK";
+            btnEl.classList.replace('text-blue-600', 'text-white');
+            btnEl.classList.replace('bg-blue-50', 'bg-green-500');
+            setTimeout(() => { 
+                btnEl.innerText = "Simpan"; 
+                btnEl.disabled = false; 
+                btnEl.classList.replace('text-white', 'text-blue-600');
+                btnEl.classList.replace('bg-green-500', 'bg-blue-50');
+            }, 2500);
+            
+            // JIKA DATA BARU (NEW), panggil fetchSilent untuk refresh cache array global
+            if (rowId === "NEW") fetchSilentDeviceCache();
+        })
+        .withFailureHandler(err => {
+            showToast("❌ Gagal: " + err.message);
+            btnEl.innerText = oldText;
+            btnEl.disabled = false;
+        })
+        .saveBankContentNative(SHEET_URL, rowId, akun, materi, link);
+    }
+
+    function deleteBankContentRow(rowId, btnEl) {
+        if(!confirm("⚠️ Hapus permanen Bank Content ini dari Database?")) return;
+        
+        const oldText = btnEl.innerText;
+        btnEl.innerHTML = `...`;
+        btnEl.disabled = true;
+        
+        google.script.run
+        .withSuccessHandler(res => {
+            showToast("🗑️ " + res);
+            btnEl.closest('tr').remove();
+            // Buang dari virtual memory agar tidak render ulang saat ditutup
+            globalBankContentCache = globalBankContentCache.filter(b => b.row != rowId);
+        })
+        .withFailureHandler(err => {
+            showToast("❌ " + err.message);
+            btnEl.innerText = oldText;
+            btnEl.disabled = false;
+        })
+        .deleteBankContentNative(SHEET_URL, rowId);
     }
 
 </script>
@@ -4905,30 +5750,39 @@ function openInvoicePreview(rowIndex) {
             
 <div id="edit-fin-image-container" class="hidden lg:w-5/12 bg-gray-100 border-b lg:border-b-0 lg:border-r border-gray-200 p-4 flex flex-col items-center justify-center min-h-[250px] lg:min-h-0 relative">
     
-    <!-- PERBAIKAN 1: Container tombol diubah menjadi div flex, diposisikan center-atas, dan diberi z-10 -->
-    <div class="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 z-10">
+    <!-- Wadah tombol atas -->
+    <div class="absolute top-4 left-1/2 -translate-x-1/2 flex flex-wrap justify-center items-center gap-2 z-10 w-full px-2">
+        
+        <!-- TOMBOL UPLOAD BARU -->
+        <input type="file" id="fin-upload-bukti" accept="image/*" class="hidden" onchange="handleFinanceBuktiUpload(event)">
+        <button id="btn-upload-bukti" onclick="document.getElementById('fin-upload-bukti').click()" class="bg-indigo-500 hover:bg-indigo-600 text-white text-[9px] font-bold px-2.5 py-1.5 rounded-full shadow-md flex items-center gap-1 transition-colors no-print cursor-pointer">
+            <svg width="12" height="12" fill="currentColor" viewBox="0 0 16 16"><path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/><path d="M7.646 1.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1-.708.708L8.5 2.707V11.5a.5.5 0 0 1-1 0V2.707L5.354 4.854a.5.5 0 1 1-.708-.708l3-3z"/></svg> Upload Bukti
+        </button>
 
-        <a id="edit-fin-image-link" href="#" target="_blank" class="bg-white hover:bg-gray-50 border border-gray-200 text-gray-700 text-[9px] font-bold px-2.5 py-1 rounded-full shadow-sm flex items-center gap-1.5 transition-colors no-print">
+        <a id="edit-fin-image-link" href="#" target="_blank" class="hidden bg-white hover:bg-gray-50 border border-gray-200 text-gray-700 text-[9px] font-bold px-2.5 py-1 rounded-full shadow-sm flex items-center gap-1.5 transition-colors no-print">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M7.71 3.5L1.15 15l3.43 6l6.55-11.5L7.71 3.5z" fill="#0F9D58"/>
                 <path d="M9.73 15L6.3 21h13.12l3.43-6H9.73z" fill="#F4B400"/>
                 <path d="M13.72 3.5l-6.57 11.5h6.86l6.57-11.5H13.72z" fill="#4285F4"/>
             </svg>
-            Cek Bukti
+            URL Drive
         </a>
 
          <a id="edit-fin-wa-link" href="#" target="_blank" class="bg-[#25D366] hover:bg-[#20bd5a] text-white text-[9px] font-bold px-2.5 py-1 rounded-full shadow-md flex items-center gap-1 transition-colors no-print ">
             <svg width="10" height="10" fill="currentColor" viewBox="0 0 16 16"><path d="M13.601 2.326A7.854 7.854 0 0 0 7.994 0C3.627 0 .068 3.558.064 7.926c0 1.399.366 2.76 1.057 3.965L0 16l4.204-1.102a7.933 7.933 0 0 0 3.79.965h.004c4.368 0 7.926-3.558 7.93-7.93A7.898 7.898 0 0 0 13.6 2.326zM7.994 14.521a6.573 6.573 0 0 1-3.356-.92l-.24-.144-2.494.654.666-2.433-.156-.251a6.56 6.56 0 0 1-1.007-3.505c0-3.626 2.957-6.584 6.591-6.584a6.56 6.56 0 0 1 4.66 1.931 6.557 6.557 0 0 1 1.928 4.66c-.004 3.639-2.961 6.592-6.592 6.592zm3.615-4.934c-.197-.099-1.17-.578-1.353-.646-.182-.065-.315-.099-.445.099-.133.197-.513.646-.627.775-.114.133-.232.148-.43.05-.197-.1-.836-.308-1.592-.985-.59-.525-.985-1.175-1.103-1.372-.114-.198-.011-.304.088-.403.087-.088.197-.232.296-.346.1-.114.133-.198.198-.33.065-.134.034-.248-.015-.347-.05-.099-.445-1.076-.612-1.47-.16-.389-.323-.335-.445-.34-.114-.007-.247-.007-.38-.007a.729.729 0 0 0-.529.247c-.182.198-.691.677-.691 1.654 0 .977.71 1.916.81 2.049.098.133 1.394 2.132 3.383 2.992.47.205.84.326 1.129.418.475.152.904.129 1.246.08.38-.058 1.171-.48 1.338-.943.164-.464.164-.86.114-.943-.049-.084-.182-.133-.38-.232z"/></svg>
             Cek WA
         </a>
-        
-</div>
+    </div>
 
-    <!-- PERBAIKAN 2: cursor-zoom-in diganti menjadi cursor-pointer dan script onclick diubah agar memanggil mode Fullscreen bawaan browser -->
+    <!-- Tambahkan placeholder visual ketika kosong -->
+    <div id="fin-placeholder-img" class="flex flex-col items-center justify-center text-gray-400 opacity-50 h-full mt-8">
+        <svg width="40" height="40" fill="currentColor" viewBox="0 0 16 16"><path d="M15 12a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h1.172a3 3 0 0 0 2.12-.879l.83-.828A1 1 0 0 1 6.827 3h2.344a1 1 0 0 1 .707.293l.828.828A3 3 0 0 0 12.828 5H14a1 1 0 0 1 1 1v6zM2 4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-1.172a2 2 0 0 1-1.414-.586l-.828-.828A2 2 0 0 0 9.172 2H6.828a2 2 0 0 0-1.414.586l-.828.828A2 2 0 0 1 3.172 4H2z"/><path d="M8 11a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5zm0 1a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z"/></svg>
+        <span class="text-[10px] mt-2 font-bold uppercase tracking-widest text-center">Preview<br>Gambar</span>
+    </div>
+
     <img id="edit-fin-image-preview" src="" alt="Loading Preview..." 
-         class="max-w-full max-h-full object-contain rounded-lg shadow-sm border border-gray-300 cursor-pointer hover:opacity-90 transition-opacity" 
+         class="hidden max-w-full max-h-full object-contain rounded-lg shadow-sm border border-gray-300 cursor-pointer hover:opacity-90 transition-opacity mt-8" 
          onclick="if(this.requestFullscreen) { this.requestFullscreen(); } else if (this.webkitRequestFullscreen) { this.webkitRequestFullscreen(); }" title="Klik untuk Layar Penuh">
-
 </div>
 
             <div class="flex-1 p-4 sm:p-6 w-full lg:w-7/12">
@@ -5035,9 +5889,14 @@ function openInvoicePreview(rowIndex) {
                                 </tbody>
                             </table>
                         </div>
-                        <button onclick="addMultiItemRow()" class="bg-white border border-blue-300 text-blue-700 px-3 py-1.5 rounded-lg text-[10px] font-black hover:bg-blue-100 transition-colors w-fit flex items-center gap-1 shadow-sm mt-1">
-                            + Tambah Baris Produk
-                        </button>
+                        <div class="flex flex-wrap gap-2 mt-2">
+                            <button onclick="addMultiItemRow()" class="bg-white border border-blue-300 text-blue-700 px-3 py-1.5 rounded-lg text-[10px] font-black hover:bg-blue-100 transition-colors flex items-center gap-1 shadow-sm">
+                                + Tambah Produk
+                            </button>
+                            <button onclick="addDiscountRow()" class="bg-white border border-red-300 text-red-600 px-3 py-1.5 rounded-lg text-[10px] font-black hover:bg-red-50 transition-colors flex items-center gap-1 shadow-sm">
+                                + Diskon (%)
+                            </button>
+                        </div>
                     </div>
 
                     <div class="md:col-span-2">
@@ -5107,7 +5966,7 @@ function openInvoicePreview(rowIndex) {
 <div id="finance-logo-modal" class="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[300000] hidden backdrop-blur-sm no-print">
     <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden relative border border-gray-100 flex flex-col">
         <div class="bg-[#008069] p-4 border-b border-green-700 flex justify-between items-center text-white shrink-0">
-            <h3 class="font-bold text-sm flex items-center gap-2">🖼️ Pengaturan Logo Invoice</h3>
+            <h3 class="font-bold text-sm flex items-center gap-2">🖼️ Pengaturan Logo Laporan Finance</h3>
             <button onclick="document.getElementById('finance-logo-modal').classList.add('hidden')" class="text-white hover:text-red-200 font-bold text-2xl leading-none">&times;</button>
         </div>
         <div class="p-5 space-y-4">

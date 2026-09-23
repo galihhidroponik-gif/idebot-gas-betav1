@@ -1532,10 +1532,21 @@ function getSettingsForUI(sheetInput) {
 
         var lastRow = tabSetting.getLastRow();
         var akunSet = new Set(); // <--- Menggunakan Set untuk mencegah nama akun ganda
+        
+        // [PERBAIKAN] BATCH READ DATA BANK CONTENT
+        var tabBankContent = ss.getSheetByName("Bank Content"); // Sesuaikan jika nama sheet berbeda
+        data.bankContent = [];
+        if (tabBankContent) {
+          var lastRowBC = tabBankContent.getLastRow();
+          if (lastRowBC > 1) {
+            // Ambil Kolom A sampai D (Asumsi B=Akun, C=Materi, D=Gambar)
+            data.bankContent = tabBankContent.getRange(2, 1, lastRowBC - 1, 4).getDisplayValues();
+          }
+        }
 
         if (lastRow >= 34) {
-          // 2. Tarik Penuh 26 Kolom (A sampai Z)
-          var deviceData = tabSetting.getRange(34, 1, lastRow - 33, 26).getDisplayValues();
+          // 2. Tarik Penuh 29 Kolom (A sampai AC) agar Rekening (AB) & Logo (AC) ikut terbaca
+          var deviceData = tabSetting.getRange(34, 1, lastRow - 33, 29).getDisplayValues();
           for (var i = 0; i < deviceData.length; i++) {
             if (deviceData[i][0] !== "") {
               data.devices.push({
@@ -1556,6 +1567,34 @@ function getSettingsForUI(sheetInput) {
         }
         // Masukkan daftar akun yang sudah disaring ke dalam data
         data.akunList = Array.from(akunSet);
+        
+        // --- BLOK KODE BARU: MENGAMBIL DATA BANK CONTENT LENGKAP ---
+        var tabBank = ss.getSheetByName("Bank Content");
+        if (!tabBank) {
+            tabBank = ss.insertSheet("Bank Content");
+            // [OPTIMASI] Gunakan setValues khusus di baris 1 agar tidak bentrok dengan rumus di Kolom A
+            tabBank.getRange("A1:D1").setValues([["Kolom A", "Akun", "Materi Spin Text", "Link Gambar"]]);
+        }
+        
+        // getDisplayValues() sangat bagus di sini karena akan membaca output akhir dari rumus Kolom A sebagai string (bukan formula-nya)
+        var bcRaw = tabBank.getDataRange().getDisplayValues();
+        data.bankContent = [];
+        
+        for (var b = 1; b < bcRaw.length; b++) {
+            var ak = String(bcRaw[b][1]).trim(); // Kolom B (Akun)
+            
+            // Filter ketat: Baris hantu dari rumus Kolom A akan diabaikan jika Kolom B (Akun) kosong
+            if (ak !== "") {
+                data.bankContent.push({
+                    row: b + 1, // Baris asli di spreadsheet
+                    kolomA: String(bcRaw[b][0] || "").trim(), // KODE BARU: Mengambil hasil rumus dari Kolom A (Index 0)
+                    akun: ak,
+                    materi: String(bcRaw[b][2] || "").trim(), // Kolom C (Index 2)
+                    link: String(bcRaw[b][3] || "").trim()    // Kolom D (Index 3)
+                });
+            }
+        }
+        // ----------------------------------------------------
         return data;
   } catch(e) { throw new Error(e.message); }
 }
@@ -1626,6 +1665,8 @@ function saveDeviceDataNative(sheetInput, index, dataObj) {
     tabSetting.getRange(targetRow, 24).setValue(safeVal(dataObj.col23)); // Kolom X (Jenis)
     tabSetting.getRange(targetRow, 25).setValue(safeVal(dataObj.col24)); // Kolom Y (Masa Aktif)
     tabSetting.getRange(targetRow, 26).setValue(safeVal(dataObj.col25)); // Kolom Z (Set Rasio)
+    tabSetting.getRange(targetRow, 28).setValue(safeVal(dataObj.col27)); // Kolom AB (Nomor Rekening)
+    tabSetting.getRange(targetRow, 29).setValue(safeVal(dataObj.col28)); // Kolom AC (Link Logo)
     
     return (index === "" || index === null) ? "✅ Device Baru Berhasil Ditambahkan!" : "✅ Data Device Berhasil Diperbarui!";
   } catch (e) {
@@ -1931,56 +1972,208 @@ function deleteFinanceRowMaster(sheetInput, rowIndex) {
 }
 
 
-// blok kode baru
+// =========================================================================
+// [OPTIMASI SAAS] FUNGSI DUAL-MODE: SIMPAN BARU & EDIT TRANSAKSI FINANCE
+// =========================================================================
 function updateFinanceDataFull(sheetUrl, rowIndex, dataObj) {
   try {
-    var ss = SpreadsheetApp.openByUrl(sheetUrl);
-    var sheet = ss.getSheetByName("Finance"); 
-    if(!sheet) throw new Error("Sheet Finance tidak ditemukan.");
+    var ss = sheetUrl ? SpreadsheetApp.openByUrl(sheetUrl) : SpreadsheetApp.getActiveSpreadsheet();
+    
+    // 1. Deteksi Tab Sheet Finance secara case-insensitive
+    var sheet = null;
+    var sheets = ss.getSheets();
+    for (var i = 0; i < sheets.length; i++) {
+      if (sheets[i].getName().trim().toLowerCase() === "finance") {
+        sheet = sheets[i];
+        break;
+      }
+    }
+    
+    if (!sheet) throw new Error("Sheet Finance tidak ditemukan.");
 
-    var isNew = (rowIndex === "NEW" || rowIndex === "" || rowIndex == null);
-    var targetRow;
-
-    // Tentukan baris target (Baris Baru vs Baris Lama)
-    if (isNew) {
-       targetRow = sheet.getLastRow() + 1;
-    } else {
-       targetRow = parseInt(rowIndex);
+    // 2. Upload Gambar ke Google Drive jika ada file base64
+    var linkDriveBaru = "";
+    var namaFileBaru = "";
+    
+    if (dataObj.fileData && dataObj.fileData.base64) {
+      var folderName = "Finance_Images";
+      var folders = DriveApp.getFoldersByName(folderName);
+      var folder = folders.hasNext() ? folders.next() : DriveApp.createFolder(folderName);
+      folder.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      
+      var d = new Date();
+      var yymmddhhmmss = Utilities.formatDate(d, Session.getScriptTimeZone(), "yyMMddHHmmss");
+      var invName = dataObj.colR ? String(dataObj.colR).trim() : "INV";
+      var netName = dataObj.colD ? String(dataObj.colD).trim() : "Unknown";
+      var pureFileName = invName + "_" + netName + "_" + yymmddhhmmss + ".jpg";
+      
+      var blob = Utilities.newBlob(Utilities.base64Decode(dataObj.fileData.base64), dataObj.fileData.mimeType, pureFileName);
+      var file = folder.createFile(blob);
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      
+      linkDriveBaru = file.getUrl();
+      namaFileBaru = "Finance_Images/" + pureFileName;
     }
 
-    // Siapkan array dengan 22 elemen kosong (Sesuai jumlah Kolom A - V)
-    var rowData = new Array(22).fill("");
+    // 3. Deteksi Operasi: Tambah Baru vs Update Baris Eksisting
+    var isNewRow = (rowIndex === "NEW" || !rowIndex || isNaN(parseInt(rowIndex)));
 
-    // Jika Edit, baca dulu data lamanya agar kolom yang tidak diedit (seperti Timestamps / File / Link Drive) tidak hilang
-    if (!isNew) {
-      rowData = sheet.getRange(targetRow, 1, 1, 22).getValues()[0];
+    if (isNewRow) {
+      // --- KONDISI A: TAMBAH DATA BARU (APPEND 22 KOLOM BAKU) ---
+      var nowStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd/MM/yyyy HH:mm:ss");
+      
+      var newRow = [
+        nowStr,                                       // Kolom A (Timestamp)
+        dataObj.colB || "",                           // Kolom B (Akun)
+        dataObj.colC || "",                           // Kolom C (Agen)
+        dataObj.colD || "",                           // Kolom D (ID Networking)
+        dataObj.colE || "",                           // Kolom E (Nama Konsumen)
+        dataObj.colF || "Pemasukan",                  // Kolom F (Status)
+        dataObj.colG || "",                           // Kolom G (Jenis A)
+        dataObj.colH || "",                           // Kolom H (Jenis B / Kategori)
+        dataObj.colI || Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd/MM/yyyy"), // Kolom I (Tgl Transaksi)
+        dataObj.colJ || "",                           // Kolom J (Nama Item)
+        dataObj.colK !== undefined ? dataObj.colK : 1, // Kolom K (Qty)
+        dataObj.colL || "-",                          // Kolom L (Satuan)
+        dataObj.colM !== undefined ? dataObj.colM : 0, // Kolom M (Harga Satuan)
+        dataObj.colN !== undefined ? dataObj.colN : 0, // Kolom N (Total)
+        dataObj.colO || "",                           // Kolom O (Note)
+        "",                                           // Kolom P (Id Group)
+        "",                                           // Kolom Q (Nama Group)
+        dataObj.colR || ("INV-" + (new Date().getTime().toString().slice(-6))), // Kolom R (No Inv)
+        linkDriveBaru,                                // Kolom S (Link Drive)
+        namaFileBaru,                                 // Kolom T (Nama File)
+        "Manual Input UI",                            // Kolom U (Proses AI)
+        dataObj.colV || ""                            // Kolom V (Bulan)
+      ];
+
+      // Single Call Write untuk Data Baru
+      sheet.appendRow(newRow);
+
     } else {
-      // Jika Baru, buat Timestamp
-      rowData[0] = new Date(); 
+      // --- KONDISI B: UPDATE DATA LAMA (BATCH WRITE DENGAN PRESERVATION DRIVE) ---
+      var rowNumber = parseInt(rowIndex);
+      
+      // Ambil nilai lama Kolom S & T jika tidak ada unggahan gambar baru
+      var existingDriveData = sheet.getRange(rowNumber, 19, 1, 2).getValues()[0];
+      var finalLinkDrive = linkDriveBaru !== "" ? linkDriveBaru : (existingDriveData[0] || "");
+      var finalNamaFile = namaFileBaru !== "" ? namaFileBaru : (existingDriveData[1] || "");
+
+      // Siapkan array 21 kolom (Kolom B sampai V)
+      var rowDataUpdate = [
+        dataObj.colB || "",                           // B: Akun
+        dataObj.colC || "",                           // C: Agen
+        dataObj.colD || "",                           // D: ID Net
+        dataObj.colE || "",                           // E: Nama Konsumen
+        dataObj.colF || "",                           // F: Status
+        dataObj.colG || "",                           // G: Jenis A
+        dataObj.colH || "",                           // H: Jenis B
+        dataObj.colI || "",                           // I: Tgl Transaksi
+        dataObj.colJ || "",                           // J: Nama Item
+        dataObj.colK !== undefined ? dataObj.colK : 1, // K: Qty
+        dataObj.colL || "-",                          // L: Satuan
+        dataObj.colM !== undefined ? dataObj.colM : 0, // M: Harga Satuan
+        dataObj.colN !== undefined ? dataObj.colN : 0, // N: Total
+        dataObj.colO || "",                           // O: Note
+        sheet.getRange(rowNumber, 16).getValue() || "", // P: Id Group (Pertahankan)
+        sheet.getRange(rowNumber, 17).getValue() || "", // Q: Nama Group (Pertahankan)
+        dataObj.colR || "",                           // R: No Inv
+        finalLinkDrive,                               // S: Link Drive
+        finalNamaFile,                                // T: Nama File
+        sheet.getRange(rowNumber, 21).getValue() || "Manual Edit UI", // U: Proses AI
+        dataObj.colV || ""                            // V: Bulan
+      ];
+
+      // Batch Write 1 Kali Eksekusi (Kolom B sampai V = 21 Kolom)
+      sheet.getRange(rowNumber, 2, 1, 21).setValues([rowDataUpdate]);
     }
-
-    // Mapping ulang array berdasarkan inputan user (Indeks array dimulai dari 0)
-    rowData[1]  = dataObj.colB; // Akun
-    rowData[2]  = dataObj.colC; // Agen
-    rowData[3]  = dataObj.colD; // ID Networking
-    rowData[4]  = dataObj.colE; // Nama Konsumen
-    rowData[5]  = dataObj.colF; // Status
-    rowData[6]  = dataObj.colG; // Jenis A
-    rowData[7]  = dataObj.colH; // Jenis B
-    rowData[8]  = dataObj.colI; // Tgl Transaksi
-    rowData[9]  = dataObj.colJ; // Nama Item
-    rowData[10] = dataObj.colK; // Qty
-    rowData[11] = dataObj.colL; // Satuan
-    rowData[12] = dataObj.colM; // Harga Satuan
-    rowData[13] = dataObj.colN; // Total
-    rowData[14] = dataObj.colO; // Note
-    rowData[17] = dataObj.colR; // No Inv
-    rowData[21] = dataObj.colV; // Bulan
-
-    // BATCH EXECUTION: Tulis 22 Kolom sekaligus dalam 1 Tarikan Napas (SUPER CEPAT)
-    sheet.getRange(targetRow, 1, 1, 22).setValues([rowData]);
-
+    
     return "success";
+  } catch(e) {
+    Logger.log("❌ Error updateFinanceDataFull: " + e.message);
+    throw new Error(e.message);
+  }
+}
+
+// =========================================================================
+// BLOK KODE BARU: FUNGSI UPDATE ADVANCED PROFIL (O(1) FAST LOOKUP)
+// =========================================================================
+function updateContactProfileFull(sheetInput, uniqueId, dataObj) {
+  try {
+    var sheetId = sheetInput.match(/\/d\/([a-zA-Z0-9-_]+)/) ? sheetInput.match(/\/d\/([a-zA-Z0-9-_]+)/)[1] : sheetInput;
+    var ss = SpreadsheetApp.openById(sheetId);
+    var sheetInbox = ss.getSheetByName("Networking");
+    
+    // Optimasi Ekstrim: Gunakan TextFinder untuk menemukan baris dalam 0 milidetik (Tanpa Loop)
+    var found = sheetInbox.getRange("B:B").createTextFinder(uniqueId).matchEntireCell(true).findNext();
+    if (!found) return "not_found";
+    
+    var targetRow = found.getRow();
+    
+    // Update Data Standar (H, C, J)
+    sheetInbox.getRange(targetRow, 8).setValue(dataObj.name); 
+    sheetInbox.getRange(targetRow, 3).setValue(dataObj.labels); 
+    sheetInbox.getRange(targetRow, 10).setValue(dataObj.biodata); 
+    
+    // Ambil Data Lama AA untuk verifikasi perubahan tanggal
+    var oldFufDay = String(sheetInbox.getRange(targetRow, 27).getValue()).trim();
+    
+    var newFufDay = String(dataObj.fufDay).trim();
+    var finalFufDay = newFufDay !== "" ? newFufDay : 7;
+    var finalFuf = dataObj.fuf !== "" ? dataObj.fuf : 0;
+    
+    // Update Kolom AA & AB
+    sheetInbox.getRange(targetRow, 27).setValue(finalFufDay);
+    sheetInbox.getRange(targetRow, 28).setValue(finalFuf);
+    
+    // Hitung Kolom AC HANYA jika ada perubahan di AA (Menggunakan Timezone Server)
+    if (oldFufDay !== newFufDay) {
+        var d = new Date();
+        var hariTambah = parseInt(finalFufDay);
+        d.setDate(d.getDate() + hariTambah);
+        var tglReminder = Utilities.formatDate(d, Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
+        sheetInbox.getRange(targetRow, 29).setValue(tglReminder);
+    }
+    
+    // Update Kolom AD & AE
+    sheetInbox.getRange(targetRow, 30).setValue(dataObj.editAd === "FALSE" ? false : true);
+    sheetInbox.getRange(targetRow, 31).setValue(dataObj.firstName);
+    // AF dibiarkan (Read-only)
+    
+    return "success";
+  } catch (e) {
+    return "error: " + e.message;
+  }
+}
+
+// =========================================================================
+// FITUR BARU: CRUD BANK CONTENT OMNICHANNEL
+// =========================================================================
+function saveBankContentNative(sheetInput, index, akun, materi, link) {
+  try {
+    var ss = sheetInput ? SpreadsheetApp.openByUrl(sheetInput) : SpreadsheetApp.getActiveSpreadsheet();
+    var tab = ss.getSheetByName("Bank Content");
+    if(!tab) throw new Error("Sheet Bank Content tidak ditemukan");
+    
+    if (index === "NEW" || !index) {
+      tab.appendRow(["", akun, materi, link]);
+    } else {
+      // getRange(baris_target, mulai_kolom_B, 1_baris, 3_kolom)
+      tab.getRange(parseInt(index), 2, 1, 3).setValues([[akun, materi, link]]);
+    }
+    return "Konten berhasil disimpan.";
+  } catch(e) {
+    throw new Error(e.message);
+  }
+}
+
+function deleteBankContentNative(sheetInput, index) {
+  try {
+    var ss = sheetInput ? SpreadsheetApp.openByUrl(sheetInput) : SpreadsheetApp.getActiveSpreadsheet();
+    var tab = ss.getSheetByName("Bank Content");
+    if(!tab) throw new Error("Sheet Bank Content tidak ditemukan");
+    tab.deleteRow(parseInt(index));
+    return "Konten dihapus permanen.";
   } catch(e) {
     throw new Error(e.message);
   }

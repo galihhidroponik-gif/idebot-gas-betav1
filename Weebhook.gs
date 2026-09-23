@@ -263,11 +263,71 @@ function updateContactData(sheetInput, uniqueId, newName, newLabels, newBiodata)
     var ss = SpreadsheetApp.openById(sheetId);
     var sheetInbox = ss.getSheetByName("Networking");
     var data = sheetInbox.getDataRange().getValues();
+    
+    // BLOK KODE BARU: Injeksi JSON Wrapper (Mendukung UI Lama & UI Baru)
+    let biodataText = newBiodata;
+    let extraData = null;
+    try {
+        let parsed = JSON.parse(newBiodata);
+        if (parsed && typeof parsed === 'object' && parsed.biodata !== undefined) {
+            biodataText = parsed.biodata;
+            extraData = parsed;
+        }
+    } catch(e) { /* Abaikan, berarti UI lama mengirim teks biasa */ }
+
     for (var i = 1; i < data.length; i++) {
-      if (data[i][1] == uniqueId) { 
+      if (String(data[i][1]).trim() === String(uniqueId).trim()) { 
+        
+        // 1. Eksekusi Single Write untuk data dasar
         sheetInbox.getRange(i + 1, 8).setValue(newName); 
         sheetInbox.getRange(i + 1, 3).setValue(newLabels);
-        sheetInbox.getRange(i + 1, 10).setValue(newBiodata);
+        sheetInbox.getRange(i + 1, 10).setValue(biodataText);
+        
+        // 2. Eksekusi Batch Write (Kolom AA sampai AE) jika menerima Payload Baru
+        if (extraData) {
+            let row = data[i];
+            
+            // AA (Index 26): Fuf Day
+            let oldFufDay = row[26];
+            let newFufDay = extraData.fufDay !== "" ? parseInt(extraData.fufDay) : 7;
+            if (isNaN(newFufDay)) newFufDay = 7;
+            
+            // AB (Index 27): FUF
+            let oldFuf = row[27] !== "" ? parseInt(row[27]) : 0;
+            if (isNaN(oldFuf)) oldFuf = 0;
+            let newFuf = extraData.fuf !== "" ? parseInt(extraData.fuf) : oldFuf;
+            
+            // AC (Index 28): Next Send FU (Berubah HANYA jika AA diubah)
+            let nextSendFU = row[28] || "";
+            if (String(oldFufDay) !== String(newFufDay)) {
+                let today = new Date();
+                today.setDate(today.getDate() + newFufDay);
+                nextSendFU = Utilities.formatDate(today, Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
+            }
+            
+            // AD (Index 29): Edit Status (True/False)
+            let editVal = extraData.editStatus !== "" ? String(extraData.editStatus).toLowerCase() : (row[29] !== "" ? String(row[29]).toLowerCase() : "true");
+            let isEdit = (editVal === "true");
+            
+            // AE (Index 30): First Name Auto Generator
+            let prefix = String(row[0] || "").substring(0, 2);
+            let devNumStr = String(row[4] || "");
+            let last4 = devNumStr.length >= 4 ? devNumStr.slice(-4) : devNumStr;
+            let waCustStr = String(row[5] || "");
+            
+            let labelStr = String(newLabels).toUpperCase();
+            let lblCode = "";
+            if (labelStr.includes("SV")) lblCode = "SV";
+            else if (labelStr.includes("ABC")) lblCode = "ABC";
+            else if (labelStr.includes("NEW")) lblCode = "NEW";
+            let labelPart = lblCode ? (lblCode + " ") : "";
+            
+            let firstName = prefix + last4 + "." + labelPart + newName + " [" + waCustStr + "]";
+            
+            // Eksekusi Batch Update ke Kolom AA(27) sampai AE(31) = 5 Kolom Sekaligus!
+            sheetInbox.getRange(i + 1, 27, 1, 5).setValues([[newFufDay, newFuf, nextSendFU, isEdit, firstName]]);
+        }
+
         return "success";
       }
     }

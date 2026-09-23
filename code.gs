@@ -143,9 +143,15 @@ function getAvailableLabels(sheetInput) {
   return OmniBot.getAvailableLabels(sheetInput); 
 }
 
-function updateContactData(sheetInput, uniqueId, newName, newLabels, newBiodata) { 
+function updateContactData(sheetInput, uniqueId, newName, newLabels, newBiodata) {
+ if (typeof OmniBot === 'undefined') return "error: Library Missing";
+ return OmniBot.updateContactData(sheetInput, uniqueId, newName, newLabels, newBiodata);
+}
+
+// BLOK KODE BARU: Jembatan khusus untuk update Profil Ekstra (AA-AF)
+function updateContactProfileFullNative(sheetInput, uniqueId, dataObj) {
   if (typeof OmniBot === 'undefined') return "error: Library Missing";
-  return OmniBot.updateContactData(sheetInput, uniqueId, newName, newLabels, newBiodata); 
+  return OmniBot.updateContactProfileFull(sheetInput, uniqueId, dataObj);
 }
 
 function markAsRead(sheetInput, uniqueId) { 
@@ -187,9 +193,6 @@ function searchContactNative(sheetInput, keyword) { return OmniBot.searchContact
 
 // =========================================================================
 // [JEMBATAN ROUTER UI FINANCE]
-// =========================================================================
-// =========================================================================
-// [MODUL CLIENT-SIDE SELF-HEALING] - CEK & BUAT SHEET FINANCE OTOMATIS
 // =========================================================================
 function checkAndCreateFinanceSheet_(sheetUrl) {
   try {
@@ -242,12 +245,26 @@ function updateFinanceRowStatus(sheetUrl, rowIndex, newStatus) {
   return OmniBot.updateFinanceRowStatus(sheetUrl, rowIndex, newStatus); 
 }
 
-// Jembatan ringan ke Library Master — pola sama persis dengan getSheetData/getAvailableLabels
-function getFinanceData(sheetInput, forceRefresh) {
-  if (typeof OmniBot === 'undefined') return { exists: false, rows: [], message: "Library belum terpasang" };
-  return OmniBot.getFinanceData(sheetInput, forceRefresh);
+// JEMBATAN BARU (Untuk Akses UI ke Data Finance)
+function getFinanceDataNative(sheetInput) { 
+  if (typeof OmniBot === 'undefined') return JSON.stringify({status: "error", message: "Library Missing"});
+  return OmniBot.getFinanceData(sheetInput); 
 }
 
+function deleteFinanceRowMaster(sheetUrl, rowIndex) { 
+  if (typeof OmniBot === 'undefined') return "error: Library Missing";
+  
+  // Melempar tugas hapus ke Library Master
+  return OmniBot.deleteFinanceRowMaster(sheetUrl, rowIndex); 
+}
+
+function updateFinanceDataFull(sheetUrl, rowIndex, dataObj) { 
+  // Pastikan library OmniBot terhubung
+  if (typeof OmniBot === 'undefined') return "error: Library Missing";
+  
+  // Melempar tugas update data edit ke Library Master
+  return OmniBot.updateFinanceDataFull(sheetUrl, rowIndex, dataObj); 
+}
 
 // =========================================================================
 // [BARU] FUNGSI HAPUS PROFIL KONTAK (EKSEKUSI NATIVE)
@@ -293,4 +310,17 @@ function runDailyCRMSync() {
  }
  // Mengeksekusi fungsi CRM dari Library Master dengan mengirimkan ID Sheet Klien
  return OmniBot.dailyCRMSync(CLIENT_SHEET_ID);
+}
+
+// =========================================================================
+// JEMBATAN AKSES UI KE BANK CONTENT (LIBRARY MASTER)
+// =========================================================================
+function saveBankContentNative(sheetInput, index, akun, materi, link) {
+  if (typeof OmniBot === 'undefined') return "error: Library Missing";
+  return OmniBot.saveBankContentNative(sheetInput, index, akun, materi, link);
+}
+
+function deleteBankContentNative(sheetInput, index) {
+  if (typeof OmniBot === 'undefined') return "error: Library Missing";
+  return OmniBot.deleteBankContentNative(sheetInput, index);
 }

@@ -167,7 +167,10 @@ var globalAI = {
     colorNetGreen: [], colorNetRed: [], colorNetDarkRed: [], colorSetRed: [],
 
     // Fungsi untuk menabung data yang akan ditulis (harus array 2D)
-    pushNet: function(r, c, vArray) { this.netWrites.push({row: r, col: c, vals: vArray}); },
+    pushNet: function(r, c, vArray) {
+      if (!r || r < 1) return; // Abaikan penulisan ke Networking jika targetRow kosong (mode Cek Koneksi)
+      this.netWrites.push({row: r, col: c, vals: vArray});
+    },
     pushSet: function(r, c, vArray) { this.setWrites.push({row: r, col: c, vals: vArray}); },
 
     // Fungsi eksekusi massal di akhir kode
@@ -257,18 +260,22 @@ var globalAI = {
              Logger.log("❌ [FETCH FAILED] HTTP " + responseCode + " | Row " + targetRow + " | Alasan: " + responseText);
           }
 
-          BatchManager.pushNet(targetRow, 17, [[waktuBerhasil]]);
+          if (targetRow && targetRow >= 1) {
+            BatchManager.pushNet(targetRow, 17, [[waktuBerhasil]]);
 
-          if (logAI[0] !== "") {
-            BatchManager.pushNet(targetRow, 22, [["AI Reply", logAI[1], logAI[2], logAI[3]]]);
-          } else {
-            BatchManager.pushNet(targetRow, 22, [["AI Reply"]]);
+            if (logAI[0] !== "") {
+              BatchManager.pushNet(targetRow, 22, [["AI Reply", logAI[1], logAI[2], logAI[3]]]);
+            } else {
+              BatchManager.pushNet(targetRow, 22, [["AI Reply"]]);
+            }
+            BatchManager.colorNetGreen.push("V" + targetRow);
           }
-          BatchManager.colorNetGreen.push("V" + targetRow);
 
         } catch (e) {
-          BatchManager.pushNet(targetRow, 22, [["Error"]]);
-          BatchManager.colorNetRed.push("V" + targetRow);
+          if (targetRow && targetRow >= 1) {
+            BatchManager.pushNet(targetRow, 22, [["Error"]]);
+            BatchManager.colorNetRed.push("V" + targetRow);
+          }
         }
       }
       
@@ -311,10 +318,15 @@ var globalAI = {
     // ========================================================================
     var isGroupMsg = reportID.toLowerCase().indexOf("@g.us") !== -1;
 
+    var isCekKoneksi = (statusQueueMode === "cek koneksi");
     var targetNetworkingRow = NetworkingMap[reportID];
     if (!targetNetworkingRow) {
-        Logger.log("⏭️ Skip baris " + realRow + ": Report ID '" + reportID + "' TIDAK ADA di Sheet Networking.");
-        continue;
+        if (isCekKoneksi) {
+            Logger.log("⏩ [Cek Koneksi] Baris " + realRow + ": Kolom C berisi 'Cek Koneksi', pengecekan ID '" + reportID + "' di Sheet Networking di-skip.");
+        } else {
+            Logger.log("⏭️ Skip baris " + realRow + ": Report ID '" + reportID + "' TIDAK ADA di Sheet Networking.");
+            continue;
+        }
     }
 
     try {
@@ -328,27 +340,27 @@ var globalAI = {
       }
 
       // ========================================================================
-      // MODIFIKASI: Logika Bypass "Stop" (Lolos jika status "Queue" ATAU "Grup")
+      // MODIFIKASI: Logika Bypass "Stop" (Lolos jika status "Queue", "Grup", ATAU "Cek Koneksi")
       // ========================================================================
-      var isBypassState = (statusQueueMode === "queue" || isGroupMsg);
+      var isBypassState = (statusQueueMode === "queue" || isGroupMsg || isCekKoneksi);
 
       if (!statusDiijinkan.includes(statusSekarang) && !isBypassState) {
-          Logger.log("⏭️ Skip baris " + realRow + ": Status Provider '" + providerID + "' adalah '" + statusSekarang + "' dan bukan Queue / Grup.");
+          Logger.log("⏭️ Skip baris " + realRow + ": Status Provider '" + providerID + "' adalah '" + statusSekarang + "' dan bukan Queue / Grup / Cek Koneksi.");
           continue;
       }
       
       if (!statusDiijinkan.includes(statusSekarang) && isBypassState) {
-          var alasanBypassState = (statusQueueMode === "queue") ? "Queue" : "Target Grup (@g.us)";
+          var alasanBypassState = isCekKoneksi ? "Cek Koneksi" : ((statusQueueMode === "queue") ? "Queue" : "Target Grup (@g.us)");
           Logger.log("⚠️ Bypass Status: Provider '" + providerID + "' sedang '" + statusSekarang + "', tapi baris " + realRow + " adalah " + alasanBypassState + ". Tetap diproses.");
       }
 
       if (waktuKirimB18 !== "") {
         if (!isDalamJamKerja(waktuKirimB18)) {
             if (isBypassState) {
-                var alasanBypassJam = (statusQueueMode === "queue") ? "Queue" : "Target Grup (@g.us)";
+                var alasanBypassJam = isCekKoneksi ? "Cek Koneksi" : ((statusQueueMode === "queue") ? "Queue" : "Target Grup (@g.us)");
                 Logger.log("⚠️ Bypass Jam Kerja: Baris " + realRow + " adalah " + alasanBypassJam + ". Tetap diproses meski di luar jam kerja.");
             } else {
-                Logger.log("⏸️ PENGIRIMAN DI-SKIP: Baris " + realRow + " bukan Queue/Grup dan di luar jam kerja (" + waktuKirimB18 + ").");
+                Logger.log("⏸️ PENGIRIMAN DI-SKIP: Baris " + realRow + " bukan Queue/Grup/Cek Koneksi dan di luar jam kerja (" + waktuKirimB18 + ").");
                 continue;
             }
         }
@@ -388,70 +400,87 @@ var globalAI = {
       // HAPUS DUPLIKASI BARIS INI:
       // var recipientDigits = autoPrefixPhone(digits.join('')); 
 
+      // blok kode baru
       var isStarsender = provider.apiUrl.toLowerCase().indexOf("starsender") !== -1;
-      var isFonnte = provider.apiUrl.toLowerCase().indexOf("fonnte") !== -1; // <-- Deteksi Fonnte
+      var isFonnte = provider.apiUrl.toLowerCase().indexOf("fonnte") !== -1;
       Logger.log("👀 DEBUG URL API Provider (" + providerID + "): [" + provider.apiUrl + "]");
       
       // ========================================================================
-      // [MODIFIKASI] LOGIKA BYPASS PENGECEKAN WA (KOLOM B BARU & KOLOM C == QUEUE)
+      // [BLOK KODE BARU] PING STATUS DEVICE (HANYA 1X PER DEVICE PER EKSEKUSI)
+      // Mencegah AI berjalan jika device mati, meskipun mode Queue/Bypass aktif!
       // ========================================================================
-      var skipCekWA = false; // <--- TAMBAHAN WAJIB
-      var alasanBypass = ""; // <--- TAMBAHAN WAJIB
-      
-      var lastActiveRaw = rowArr[1]; // Kolom B
-      // Tambahkan kondisi bypass jika penerima adalah Grup WhatsApp
-      if (isGroup) {
-          skipCekWA = true;
+      if (!provider.hasOwnProperty('isOnlineStatus')) {
+          provider.isOnlineStatus = "OK"; // Asumsi awal aman
+          
+          if (!isStarsender && !isFonnte && provider.prefixUrl) {
+              Logger.log("📡 [Ping Device] Mengecek kesehatan Onesender: " + providerID);
+              var cleanPrefix = provider.prefixUrl.replace(/\/$/, ""); 
+              var authHeader = provider.apiKey.indexOf("Bearer ") === 0 ? provider.apiKey : "Bearer " + provider.apiKey;
+              
+              try {
+                  var resDevice = UrlFetchApp.fetch(cleanPrefix + "/api/v1/device", {
+                      method: "get", headers: { "Authorization": authHeader }, muteHttpExceptions: true
+                  });
+                  var devData = JSON.parse(resDevice.getContentText());
+                  var stat = (devData.status || (devData.data && devData.data.status) || "").toLowerCase();
+                  
+                  if (stat === "offline" || stat === "disconnect") {
+                      Logger.log("🚨 [Ping Device] Onesender OFFLINE secara eksplisit!");
+                      provider.isOnlineStatus = "DEVICE_ERROR";
+                  } else {
+                      Logger.log("✅ [Ping Device] Onesender ONLINE.");
+                  }
+              } catch(e) {
+                  Logger.log("⚠️ [Ping Device] Gagal konek Onesender: " + e.message);
+              }
+          }
       }
 
-      // 1. Cek Syarat Bypass Kondisi A: Jika Kolom C bernilai "queue"
-      if (statusQueueMode === "queue") {
-          skipCekWA = true;
-          alasanBypass = "Kolom C berstatus 'queue'.";
-      } 
-      // 2. Cek Syarat Bypass Kondisi B: Jika Kolom B aktif baru-baru ini (Hari ini, Kemarin, Lusa Kemarin)
-      else if (lastActiveRaw && lastActiveRaw !== "") {
-          var lastActiveDate = null;
-          var parts = lastActiveRaw.toString().trim().split(/[\/\-]/);
-          
-          if (parts.length === 3) {
-              var p0 = parseInt(parts[0], 10); // Bulan (06)
-              var p1 = parseInt(parts[1], 10); // Tanggal (12)
-              var p2 = parseInt(parts[2], 10); // Tahun (2026)
-              
-              // Cek Cerdas: Format MM/dd/yyyy (06/12/2026 -> p0=6 Juni, p1=12 Tanggal)
-              if (p0 <= 12 && p1 <= 31) {
-                  lastActiveDate = new Date(p2, p0 - 1, p1);
-              } else if (p0 > 12) { // Antisipasi format dd/MM/yyyy jika sewaktu-waktu berubah
-                  lastActiveDate = new Date(p2, p1 - 1, p0);
+      var skipCekWA = false; 
+      var alasanBypass = ""; 
+      var lastActiveRaw = rowArr[1]; 
+      
+      if (isCekKoneksi) {
+          // Modus 'Cek Koneksi': WAJIB menguji API Cek WA (Dilarang Bypass Apapun Alasannya!)
+          skipCekWA = false;
+          alasanBypass = "";
+      } else {
+          if (isGroup) { skipCekWA = true; }
+          if (statusQueueMode === "queue") {
+              skipCekWA = true;
+              alasanBypass = "Kolom C berstatus 'queue'.";
+          } else if (lastActiveRaw && lastActiveRaw !== "") {
+              var lastActiveDate = null;
+              var parts = lastActiveRaw.toString().trim().split(/[\/\-]/);
+              if (parts.length === 3) {
+                  var p0 = parseInt(parts[0], 10), p1 = parseInt(parts[1], 10), p2 = parseInt(parts[2], 10);
+                  if (p0 <= 12 && p1 <= 31) lastActiveDate = new Date(p2, p0 - 1, p1);
+                  else if (p0 > 12) lastActiveDate = new Date(p2, p1 - 1, p0);
+                  else lastActiveDate = new Date(lastActiveRaw);
               } else {
                   lastActiveDate = new Date(lastActiveRaw);
               }
-          } else {
-              lastActiveDate = new Date(lastActiveRaw);
-          }
 
-          if (lastActiveDate && !isNaN(lastActiveDate.getTime())) {
-              var today = new Date();
-              
-              // Reset waktu ke jam 00:00:00 untuk perbandingan murni tanggal hari
-              today.setHours(0, 0, 0, 0);
-              lastActiveDate.setHours(0, 0, 0, 0);
-              
-              // Menggunakan Math.round agar terhindar dari selisih desimal jam akibat timezone script
-              var diffTime = today.getTime() - lastActiveDate.getTime();
-              var diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24)); 
-              
-              // Kebijakan: 0 = Hari ini, 1 = Kemarin, 2 = Lusa Kemarin
-              if (diffDays >= 0 && diffDays < 3) { 
-                  skipCekWA = true;
-                  alasanBypass = "Nomor tercatat aktif di Kolom B (" + diffDays + " hari yang lalu).";
+              if (lastActiveDate && !isNaN(lastActiveDate.getTime())) {
+                  var today = new Date();
+                  today.setHours(0, 0, 0, 0); lastActiveDate.setHours(0, 0, 0, 0);
+                  var diffTime = today.getTime() - lastActiveDate.getTime();
+                  var diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24)); 
+                  
+                  if (diffDays >= 0 && diffDays < 3) { 
+                      skipCekWA = true;
+                      alasanBypass = "Nomor tercatat aktif di Kolom B (" + diffDays + " hari yang lalu).";
+                  }
               }
           }
       }
 
       var hasilCek = true;
-     if (skipCekWA) {
+      
+      // LOGIKA PENENTUAN FINAL: Device Offline Menang Mutlak dari Bypass Apapun!
+      if (provider.isOnlineStatus === "DEVICE_ERROR") {
+          hasilCek = "DEVICE_ERROR";
+      } else if (skipCekWA) {
           Logger.log("⏩ [Cek WA] Bypass pengecekan API. Alasan: " + alasanBypass);
           hasilCek = true; 
       } else {
@@ -459,24 +488,40 @@ var globalAI = {
           if (isStarsender) {
               hasilCek = cekNomorStarsender(recipientDigits, provider.apiKey);
           } else if (isFonnte) {
-              // Fonnte tidak butuh cek WA dinamis / tidak ada endpoint di dokumentasi saat ini
               Logger.log("⏩ [Cek WA] Fonnte terdeteksi, bypass pengecekan otomatis.");
               hasilCek = true; 
           } else {
               hasilCek = cekNomorOneSender(recipientDigits, provider.apiKey, provider.prefixUrl);
           }
       }
-      // ========================================================================
       
       if (hasilCek === "DEVICE_ERROR") {
         // PENANGANAN JIKA DEVICE ADMIN MATI / ERROR API
         Logger.log("⚠️ [Cek WA] Skip baris " + realRow + ": Koneksi Device Admin terputus. Menulis status ke Setting.");
 
-        // HANYA UPDATE DI SHEET SETTING: Tulis "Device OFF" di Kolom C (Indeks 3)
+        // 1. UPDATE FISIK (VIA BATCH): Tulis "Device OFF" di Kolom C (Indeks 3) Sheet Setting
         if (provider.settingRow) {
             BatchManager.pushSet(provider.settingRow, 3, [["Device OFF"]]);
             BatchManager.colorSetRed.push("C" + provider.settingRow);
         }
+        
+        // 2. UPDATE MEMORI (O(1) CACHE): Putus rantai agar antrean berikutnya tidak menembak API yang mati
+        providerMap[providerID].status = "Device OFF";
+        provider.status = "Device OFF"; 
+        
+        continue; // Lanjut ke antrean berikutnya.
+        // PENANGANAN JIKA DEVICE ADMIN MATI / ERROR API
+        Logger.log("⚠️ [Cek WA] Skip baris " + realRow + ": Koneksi Device Admin terputus. Menulis status ke Setting.");
+
+        // 1. UPDATE FISIK (VIA BATCH): Tulis "Device OFF" di Kolom C (Indeks 3) Sheet Setting
+        if (provider.settingRow) {
+            BatchManager.pushSet(provider.settingRow, 3, [["Device OFF"]]);
+            BatchManager.colorSetRed.push("C" + provider.settingRow);
+        }
+        
+        // 2. UPDATE MEMORI (O(1) CACHE): Putus rantai agar antrean berikutnya tidak menembak API yang mati
+        providerMap[providerID].status = "Device OFF";
+        provider.status = "Device OFF"; // Sinkronisasi variabel lokal
         
         continue; // Lanjut ke antrean berikutnya. Kolom V dan C di Networking tidak disentuh.
         
@@ -484,12 +529,14 @@ var globalAI = {
         // PENANGANAN JIKA NOMOR CUSTOMER BENAR-BENAR MATI
         Logger.log("⏭️ [Cek WA] Skip baris " + realRow + ": Nomor " + recipientDigits + " TIDAK AKTIF di WA.");
         
-        // 1. Bersihkan value lama dan ubah kolom C (Indeks 3) menjadi 'XX'
-        BatchManager.pushNet(targetNetworkingRow, 3, [["XX"]]);
-        
-        // 2. Ubah kolom V (Indeks 22) menjadi 'Tidak Aktif'
-        BatchManager.pushNet(targetNetworkingRow, 22, [["Tidak Aktif"]]);
-        BatchManager.colorNetDarkRed.push("V" + targetNetworkingRow);
+        if (targetNetworkingRow) {
+          // 1. Bersihkan value lama dan ubah kolom C (Indeks 3) menjadi 'XX'
+          BatchManager.pushNet(targetNetworkingRow, 3, [["XX"]]);
+          
+          // 2. Ubah kolom V (Indeks 22) menjadi 'Tidak Aktif'
+          BatchManager.pushNet(targetNetworkingRow, 22, [["Tidak Aktif"]]);
+          BatchManager.colorNetDarkRed.push("V" + targetNetworkingRow);
+        }
         
         continue; 
       } else {
@@ -1194,6 +1241,7 @@ function cekNomorStarsender(nomor, apiKey) {
 
 /**
  * Fungsi Cek Nomor Aktif untuk OneSender (Menggunakan Prefix URL Kolom K)
+ * [UPDATE]: Penambahan validasi GET /api/v1/device untuk deteksi device putus
  */
 function cekNomorOneSender(nomor, apiKey, prefixUrl) {
   try {
@@ -1203,30 +1251,50 @@ function cekNomorOneSender(nomor, apiKey, prefixUrl) {
     }
 
     var cleanPrefix = prefixUrl.replace(/\/$/, ""); 
-    var checkUrl = cleanPrefix + "/api/v1/check-number?phone_number=" + nomor;
-
+    
+    // Pastikan Authorization formatnya "Bearer <apiKey>"
+    var authHeader = apiKey.indexOf("Bearer ") === 0 ? apiKey : "Bearer " + apiKey;
     var options = {
       method: "get", 
-      headers: { "Authorization": apiKey },
+      headers: { "Authorization": authHeader },
       muteHttpExceptions: true
     };
 
+    // =========================================================
+    // 1. CEK STATUS DEVICE TERLEBIH DAHULU (MENCEGAH PENIPUAN PENDING)
+    // =========================================================
+    var deviceUrl = cleanPrefix + "/api/v1/device";
+    var resDevice = UrlFetchApp.fetch(deviceUrl, options);
+    var deviceText = resDevice.getContentText();
+    
+    var deviceData = JSON.parse(deviceText);
+    
+    // Membaca status, antisipasi struktur JSON { status: 'offline' } atau { data: { status: 'offline' } }
+    var devStatus = (deviceData.status || (deviceData.data && deviceData.data.status) || "").toLowerCase();
+    
+    if (devStatus === "offline" || devStatus === "disconnect") {
+       Logger.log("🚨 API OneSender: Device Terdeteksi OFFLINE secara eksplisit!");
+       return "DEVICE_ERROR"; // Segera putus siklus
+    }
+
+    // =========================================================
+    // 2. CEK NOMOR JIKA DEVICE TERKONFIRMASI ONLINE
+    // =========================================================
+    var checkUrl = cleanPrefix + "/api/v1/check-number?phone_number=" + nomor;
     var resp = UrlFetchApp.fetch(checkUrl, options);
     var resText = resp.getContentText();
     
-    Logger.log("   -> API OneSender Response untuk " + nomor + ": " + resText); 
+    Logger.log("   -> API OneSender Response cek nomor untuk " + nomor + ": " + resText); 
     var res = JSON.parse(resText);
     
-    // Deteksi apakah respon API valid dan device admin berhasil mengecek
     if (res && res.data && typeof res.data.has_account !== "undefined") {
       if (res.data.has_account === true) {
-        return true;  // Nomor Customer Aktif
+        return true;  
       } else {
-        return false; // Nomor Customer BENAR-BENAR Mati
+        return false; 
       }
     } else {
-      // Jika data tidak lengkap, artinya Device Admin Offline atau Limit API
-      Logger.log("⚠️ API OneSender: Device Admin Offline / Error JSON.");
+      Logger.log("⚠️ API OneSender: Respon cek nomor tidak lengkap.");
       return "DEVICE_ERROR";
     }
     
@@ -1545,22 +1613,23 @@ function getSettingsForUI(sheetInput) {
         }
 
         if (lastRow >= 34) {
-          // 2. Tarik Penuh 29 Kolom (A sampai AC) agar Rekening (AB) & Logo (AC) ikut terbaca
-          var deviceData = tabSetting.getRange(34, 1, lastRow - 33, 29).getDisplayValues();
+          // 2. Tarik Penuh 30 Kolom (A sampai AD) agar Rekening (AB), Logo (AC), & Akses Menu (AD) ikut terbaca
+          var deviceData = tabSetting.getRange(34, 1, lastRow - 33, 30).getDisplayValues();
           for (var i = 0; i < deviceData.length; i++) {
-            if (deviceData[i][0] !== "") {
+            var provId = String(deviceData[i][0] || "").trim();
+            var csName = String(deviceData[i][1] || "").trim();
+            if (provId !== "" || csName !== "") {
               data.devices.push({
                 index: i, 
-                providerId: deviceData[i][0], 
-                csName: deviceData[i][1], 
+                providerId: provId, 
+                csName: csName, 
                 status: deviceData[i][5],
                 fullRow: deviceData[i] // 3. Lempar Data Utuh ke UI untuk Form Edit
               });
 
               // Kumpulkan Nama Akun (Kolom B)
-              let namaAkun = String(deviceData[i][1]).trim();
-              if (namaAkun !== "") {
-                  akunSet.add(namaAkun);
+              if (csName !== "") {
+                  akunSet.add(csName);
               }
             }
           }
@@ -1667,6 +1736,7 @@ function saveDeviceDataNative(sheetInput, index, dataObj) {
     tabSetting.getRange(targetRow, 26).setValue(safeVal(dataObj.col25)); // Kolom Z (Set Rasio)
     tabSetting.getRange(targetRow, 28).setValue(safeVal(dataObj.col27)); // Kolom AB (Nomor Rekening)
     tabSetting.getRange(targetRow, 29).setValue(safeVal(dataObj.col28)); // Kolom AC (Link Logo)
+    tabSetting.getRange(targetRow, 30).setValue(safeVal(dataObj.col29)); // Kolom AD (Akses Menu)
     
     return (index === "" || index === null) ? "✅ Device Baru Berhasil Ditambahkan!" : "✅ Data Device Berhasil Diperbarui!";
   } catch (e) {
@@ -1727,18 +1797,18 @@ function verifyLogin(sheetUrl, user, pass) {
       }
     }
     
-    // 2. Cek Login Khusus CS via Data Device (G34:H)
+    // 2. Cek Login Khusus CS via Data Device (A34:AD - 30 Kolom agar Kolom AD / Akses Menu ikut terbaca)
     var lastRow = sheet.getLastRow();
     if (lastRow >= 34) {
-      // getRange(baris_mulai, kolom_G(7), jumlah_baris, 2_kolom)
-      var deviceData = sheet.getRange(34, 7, lastRow - 33, 2).getValues(); 
+      var deviceData = sheet.getRange(34, 1, lastRow - 33, 30).getValues(); 
       for (var j = 0; j < deviceData.length; j++) {
-        var devUser = String(deviceData[j][0]).trim(); // Kolom G (No Server / Username)
-        var devPass = String(deviceData[j][1]).trim(); // Kolom H (BSUID / Password)
+        var devUser = String(deviceData[j][6] || "").trim(); // Kolom G (No Server / Username, index 6)
+        var devPass = String(deviceData[j][7] || "").trim(); // Kolom H (BSUID / Password, index 7)
+        var devMenuAccess = String(deviceData[j][29] || "").trim(); // Kolom AD (Akses Menu, index 29)
         
         if (devUser !== "" && devUser === user && devPass === pass) {
           // Sukses Login sebagai CS. Role ditandai "CS:" agar fungsi filter tau ini tipe CS
-          return { success: true, isMaster: false, isCS: true, roles: ["CS:" + devUser] };
+          return { success: true, isMaster: false, isCS: true, roles: ["CS:" + devUser], menuAccess: devMenuAccess };
         }
       }
     }
@@ -1878,9 +1948,9 @@ function dailyCRMSync(clientSheetId) {
 // [BLOK KODE BARU] ENDPOINT UI FINANCE (SIMPAN DI ACTIONKIRIM.GS)
 // =========================================================================
 
-function getFinanceDataMaster(sheetUrl) {
+function getFinanceDataMaster(sheetUrl, userAccountsStr) {
   try {
-    const ss = SpreadsheetApp.openByUrl(sheetUrl);
+    const ss = sheetUrl ? SpreadsheetApp.openByUrl(sheetUrl) : SpreadsheetApp.getActiveSpreadsheet();
     
     // Deteksi tab sheet "Finance" secara fleksibel
     let sheet = null;
@@ -1907,17 +1977,90 @@ function getFinanceDataMaster(sheetUrl) {
     const data = sheet.getDataRange().getDisplayValues();
     if (data.length <= 1) return []; // Hanya ada header
     
-    let result = [];
-    // LIMITASI UI: Maksimal 500 baris transaksi terakhir untuk mencegah browser lag/timeout
-    const startRow = Math.max(1, data.length - 500); 
+    // =========================================================
+    // SERVER SIDE FILTERING BERDASARKAN ROLE & CS (FINANCE)
+    // =========================================================
+    var allowedAccounts = [];
+    var isMaster = false;
+    var isCS = false;
+    var csDeviceNum = "";
+    var allowedCSNames = [];
     
-    // Looping reverse (Terbaru di atas)
-    for (let i = data.length - 1; i >= startRow; i--) {
-      result.push({
-        rowIndex: i + 1,  // Format Object yang benar agar tidak lost saat serialisasi JSON
-        values: data[i]
-      });
+    if (userAccountsStr) {
+      allowedAccounts = userAccountsStr.split(",").map(function(s) { return s.trim(); });
+      isMaster = allowedAccounts.includes("Master Admin");
+      
+      // Deteksi jika role yang dikirim adalah khusus CS (Format: "CS:NomorServer")
+      if (allowedAccounts.length === 1 && allowedAccounts[0].indexOf("CS:") === 0) {
+        isCS = true;
+        csDeviceNum = allowedAccounts[0].substring(3).trim().toLowerCase();
+        if (csDeviceNum) allowedCSNames.push(csDeviceNum);
+        
+        // Ambil data CS/Agen dari Sheet Setting (Kolom A / Nama CS & Kolom G / No Server, mengecualikan Kolom B Provider)
+        var tabSetting = ss.getSheetByName("Setting");
+        if (tabSetting) {
+          var lastSetRow = tabSetting.getLastRow();
+          if (lastSetRow >= 34) {
+            var settingData = tabSetting.getRange(34, 1, lastSetRow - 33, 10).getDisplayValues();
+            for (var k = 0; k < settingData.length; k++) {
+              var namaCS = String(settingData[k][0] || "").trim().toLowerCase(); // Kolom A (Nama CS/Agen)
+              var devNum = String(settingData[k][6] || "").trim().toLowerCase();  // Kolom G (No Server / Username)
+              
+              if ((devNum && (devNum === csDeviceNum || devNum.indexOf(csDeviceNum) !== -1 || csDeviceNum.indexOf(devNum) !== -1)) ||
+                  (namaCS && (namaCS === csDeviceNum || namaCS.indexOf(csDeviceNum) !== -1 || csDeviceNum.indexOf(namaCS) !== -1))) {
+                if (namaCS && !allowedCSNames.includes(namaCS)) allowedCSNames.push(namaCS);
+                if (devNum && !allowedCSNames.includes(devNum)) allowedCSNames.push(devNum);
+              }
+            }
+          }
+        }
+      }
+    } else {
+      isMaster = true; // Default ke Master jika tanpa parameter
     }
+    
+    let result = [];
+    
+    // Looping reverse (Terbaru di atas) untuk mendapatkan hingga 500 baris yang diizinkan
+    for (let i = data.length - 1; i >= 1; i--) {
+      const row = data[i];
+      const akun = String(row[1] || "").trim(); // Kolom B
+      const agen = String(row[2] || "").trim(); // Kolom C
+      
+      if (!isMaster) {
+        let isAllowed = false;
+        
+        if (isCS) {
+          const agenLower = agen.toLowerCase();
+          const akunLower = akun.toLowerCase();
+          
+          for (var idx = 0; idx < allowedCSNames.length; idx++) {
+            var idStr = allowedCSNames[idx];
+            if (idStr && (
+              (agenLower && (agenLower.indexOf(idStr) !== -1 || idStr.indexOf(agenLower) !== -1)) ||
+              (akunLower && (akunLower.indexOf(idStr) !== -1 || idStr.indexOf(akunLower) !== -1))
+            )) {
+              isAllowed = true;
+              break;
+            }
+          }
+        } else if (allowedAccounts.length > 0) {
+          if (allowedAccounts.includes(akun) || allowedAccounts.includes(agen)) {
+            isAllowed = true;
+          }
+        }
+        
+        if (!isAllowed) continue; // Lewati baris ini dari pengiriman HTTP (Server-Side Sieve)
+      }
+      
+      result.push({
+        rowIndex: i + 1,  // Format Object dengan Index Baris Asli
+        values: row
+      });
+      
+      if (result.length >= 500) break; // Limit 500 baris transaksi yang diizinkan
+    }
+    
     return result;
     
   } catch(e) {
@@ -2103,20 +2246,126 @@ function updateContactProfileFull(sheetInput, uniqueId, dataObj) {
     var sheetId = sheetInput.match(/\/d\/([a-zA-Z0-9-_]+)/) ? sheetInput.match(/\/d\/([a-zA-Z0-9-_]+)/)[1] : sheetInput;
     var ss = SpreadsheetApp.openById(sheetId);
     var sheetInbox = ss.getSheetByName("Networking");
+    if (!sheetInbox) return "error: Sheet Networking tidak ditemukan";
     
     // Optimasi Ekstrim: Gunakan TextFinder untuk menemukan baris dalam 0 milidetik (Tanpa Loop)
     var found = sheetInbox.getRange("B:B").createTextFinder(uniqueId).matchEntireCell(true).findNext();
-    if (!found) return "not_found";
+    var targetRow;
+
+    if (!found) {
+      if (dataObj.isNewContact) {
+        var nowStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
+        var colM_idFormat = "id" + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyMMdd"); // Rumus idyymmdd (misal: id261110)
+        
+        // Lookup Kolom A (Akun CS) dari Setting Sheet berdasarkan Nomor Server (Kolom G = dataObj.deviceNum)
+        var finalAkun = dataObj.akun || "ACC1";
+        if (dataObj.deviceNum && String(dataObj.deviceNum).trim() !== "") {
+            var tabSetting = ss.getSheetByName("Setting");
+            if (tabSetting) {
+                var lastRowSetting = tabSetting.getLastRow();
+                if (lastRowSetting >= 34) {
+                    var devRange = tabSetting.getRange(34, 1, lastRowSetting - 33, 7).getDisplayValues();
+                    for (var k = 0; k < devRange.length; k++) {
+                        var numServerG = String(devRange[k][6] || "").trim().replace(/\D/g, '');
+                        var searchDevNum = String(dataObj.deviceNum).trim().replace(/\D/g, '');
+                        if (numServerG !== "" && numServerG === searchDevNum) {
+                            var akunFound = String(devRange[k][1] || "").trim(); // Kolom B
+                            if (akunFound) finalAkun = akunFound;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        var cleanPhone = String(uniqueId).replace(/\D/g, '');
+        var finalFufDay = dataObj.fufDay !== "" && dataObj.fufDay !== undefined ? dataObj.fufDay : 7;
+        var finalFuf = dataObj.fuf !== "" && dataObj.fuf !== undefined ? dataObj.fuf : 0;
+        
+        var calcNextSend = dataObj.nextSend;
+        if (!calcNextSend || String(calcNextSend).trim() === "") {
+          var d = new Date();
+          d.setDate(d.getDate() + parseInt(finalFufDay));
+          calcNextSend = Utilities.formatDate(d, Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
+        }
+
+        var formattedHist = "";
+        if (dataObj.appendHistory && String(dataObj.appendHistory).trim() !== "") {
+          formattedHist = String(dataObj.appendHistory);
+        }
+
+        var newRow = [
+          finalAkun,                        // Kolom A: Akun (Lookup Setting Kolom B berdasarkan Kolom G)
+          uniqueId,                         // Kolom B: ID Networking (Contoh: 6295386018255@admin6289509063690)
+          dataObj.labels || "NEW",          // Kolom C: Label WA
+          dataObj.device || "",             // Kolom D: Nama Device (Auto Lookup Setting Kolom A)
+          dataObj.deviceNum || "",          // Kolom E: Nomor Device (Pilih List Setting Kolom G)
+          dataObj.waPhone || "",            // Kolom F: WA Customer (Input Manual No WA)
+          "",                               // Kolom G: BSUID
+          dataObj.name || "",               // Kolom H: Nama Panggilan
+          dataObj.namaLengkap || "",        // Kolom I: Nama Lengkap
+          dataObj.biodata || "",            // Kolom J: Biodata
+          nowStr,                           // Kolom K: Timestamp
+          "{}",                             // Kolom L: Raw JSON
+          colM_idFormat,                    // Kolom M: Rumus idyymmdd (misal: id261110)
+          false,                            // Kolom N: Is Me
+          "",                               // Kolom O: Message ID
+          "",                               // Kolom P: Waktu Masuk
+          "",                               // Kolom Q: Waktu Keluar
+          0,                                // Kolom R: Qty Inbox
+          0,                                // Kolom S: Qty Outbox
+          formattedHist,                    // Kolom T: History Chat
+          dataObj.limitHistory || "",       // Kolom U: Limit History
+          "Queue",                          // Kolom V: Log AI Status
+          "",                               // Kolom W: Log
+          "",                               // Kolom X: Log
+          "Manual Input UI",                // Kolom Y: Log AI
+          true,                             // Kolom Z: Active Sync
+          finalFufDay,                      // Kolom AA: Fuf Day
+          finalFuf,                         // Kolom AB: FUF
+          calcNextSend,                     // Kolom AC: Next Send FU
+          dataObj.editAd === "FALSE" ? false : true, // Kolom AD: SYNC GContact
+          dataObj.firstName || ""           // Kolom AE: Nama GContact
+        ];
+
+        sheetInbox.appendRow(newRow);
+        return "success";
+      } else {
+        return "not_found";
+      }
+    }
     
-    var targetRow = found.getRow();
+    targetRow = found.getRow();
     
-    // Update Data Standar (H, C, J)
+    // Update Data Standar (H, I, C, J)
     sheetInbox.getRange(targetRow, 8).setValue(dataObj.name); 
+    sheetInbox.getRange(targetRow, 9).setValue(dataObj.namaLengkap !== undefined ? dataObj.namaLengkap : ""); 
     sheetInbox.getRange(targetRow, 3).setValue(dataObj.labels); 
     sheetInbox.getRange(targetRow, 10).setValue(dataObj.biodata); 
+    // Update Kolom U (Limit History Personal)
+    sheetInbox.getRange(targetRow, 21).setValue(dataObj.limitHistory);
     
-    // Ambil Data Lama AA untuk verifikasi perubahan tanggal
+    // Tambah Data Kolom T (History Message Manual) jika diisi
+    if (dataObj.appendHistory && String(dataObj.appendHistory).trim() !== "") {
+      var cellT = sheetInbox.getRange(targetRow, 20); // Kolom T
+      var currentVal = cellT.getValue();
+      
+      var formattedContent = String(dataObj.appendHistory).replace(/\[/g, "_\n[");
+      var parts = formattedContent.split(/(\[.*?\])/g);
+      for (var j = 0; j < parts.length; j++) {
+        if (!parts[j].match(/^\[.*\]$/)) {
+           parts[j] = parts[j].replace(/:/g, ":\n");
+        }
+      }
+      formattedContent = parts.join('');
+      
+      var newVal = (currentVal ? currentVal + "\n\n" : "") + formattedContent;
+      cellT.setValue(newVal);
+    }
+    
+    // Ambil Data Lama AA & AC untuk verifikasi perubahan
     var oldFufDay = String(sheetInbox.getRange(targetRow, 27).getValue()).trim();
+    var oldNextSend = String(sheetInbox.getRange(targetRow, 29).getValue()).trim();
     
     var newFufDay = String(dataObj.fufDay).trim();
     var finalFufDay = newFufDay !== "" ? newFufDay : 7;
@@ -2126,13 +2375,18 @@ function updateContactProfileFull(sheetInput, uniqueId, dataObj) {
     sheetInbox.getRange(targetRow, 27).setValue(finalFufDay);
     sheetInbox.getRange(targetRow, 28).setValue(finalFuf);
     
-    // Hitung Kolom AC HANYA jika ada perubahan di AA (Menggunakan Timezone Server)
-    if (oldFufDay !== newFufDay) {
+    // Update Kolom AC (Next Send FU - Edit Manual / Auto Recalculate)
+    var newNextSend = dataObj.nextSend !== undefined && dataObj.nextSend !== null ? String(dataObj.nextSend).trim() : null;
+    if (newNextSend !== null && newNextSend !== oldNextSend) {
+        sheetInbox.getRange(targetRow, 29).setValue(newNextSend);
+    } else if (oldFufDay !== newFufDay) {
         var d = new Date();
         var hariTambah = parseInt(finalFufDay);
         d.setDate(d.getDate() + hariTambah);
         var tglReminder = Utilities.formatDate(d, Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm:ss");
         sheetInbox.getRange(targetRow, 29).setValue(tglReminder);
+    } else if (newNextSend !== null) {
+        sheetInbox.getRange(targetRow, 29).setValue(newNextSend);
     }
     
     // Update Kolom AD & AE
@@ -2176,5 +2430,243 @@ function deleteBankContentNative(sheetInput, index) {
     return "Konten dihapus permanen.";
   } catch(e) {
     throw new Error(e.message);
+  }
+}
+
+// =========================================================================
+// [BLOK KODE BARU] ENGINE TICKET & AREA (BATCH & TEXTFINDER)
+// =========================================================================
+
+// 1. Fungsi Tarik Data (Batch Read dengan Server-Side Filtering untuk Area & Ticket)
+function getAreaTicketDataMaster(sheetUrl, userAccountsStr) {
+  try {
+    var ss = sheetUrl ? SpreadsheetApp.openByUrl(sheetUrl) : SpreadsheetApp.getActiveSpreadsheet();
+    var sheetArea = ss.getSheetByName("Area");
+    var sheetTicket = ss.getSheetByName("Ticket");
+    
+    var rawArea = sheetArea ? sheetArea.getDataRange().getDisplayValues() : [];
+    var rawTicket = sheetTicket ? sheetTicket.getDataRange().getDisplayValues() : [];
+    
+    // =========================================================
+    // SERVER SIDE FILTERING BERDASARKAN ROLE & CS (AREA & TICKET)
+    // =========================================================
+    var allowedAccounts = [];
+    var isMaster = false;
+    var isCS = false;
+    var csDeviceNum = "";
+    var allowedCSNames = [];
+    
+    if (userAccountsStr) {
+      allowedAccounts = userAccountsStr.split(",").map(function(s) { return s.trim(); });
+      isMaster = allowedAccounts.includes("Master Admin");
+      
+      // Deteksi jika role yang dikirim adalah khusus CS (Format: "CS:NomorServer")
+      if (allowedAccounts.length === 1 && allowedAccounts[0].indexOf("CS:") === 0) {
+        isCS = true;
+        csDeviceNum = allowedAccounts[0].substring(3);
+        
+        // Ambil nama CS/Agen dari Sheet Setting (G34:H & B34:B) yang cocok dengan csDeviceNum
+        var tabSetting = ss.getSheetByName("Setting");
+        if (tabSetting) {
+          var lastSetRow = tabSetting.getLastRow();
+          if (lastSetRow >= 34) {
+            var settingData = tabSetting.getRange(34, 1, lastSetRow - 33, 10).getDisplayValues();
+            for (var k = 0; k < settingData.length; k++) {
+              var devNum = String(settingData[k][6]).replace(/\D/g, ''); // Kolom G (No Device)
+              var csName = String(settingData[k][1]).trim().toLowerCase(); // Kolom B (Nama CS)
+              if (devNum === csDeviceNum && csName) {
+                allowedCSNames.push(csName);
+              }
+            }
+          }
+        }
+      }
+    } else {
+      isMaster = true; // Default Master jika tanpa parameter
+    }
+
+    // Helper untuk mengekstrak nomor device dari ID agen (misal: "6285386018255.@admin628115651567" -> "628115651567")
+    function extractDeviceNum(val) {
+      if (!val) return "";
+      var str = String(val).trim();
+      if (str.indexOf("@admin") !== -1) {
+        var parts = str.split("@admin");
+        return parts[1].replace(/\D/g, "");
+      }
+      return str.replace(/\D/g, "");
+    }
+
+    // ---------------------------------------------------------
+    // A. FILTER SHEET AREA
+    // ---------------------------------------------------------
+    var filteredArea = [];
+    if (rawArea.length > 0) {
+      filteredArea.push(rawArea[0]); // Simpan Header
+      
+      for (var i = 1; i < rawArea.length; i++) {
+        var r = rawArea[i];
+        var akun = String(r[1] || "").trim();           // Kolom B (Akun)
+        var idAgenRaw = String(r[13] || "").trim();     // Kolom N (ID Agen)
+        var namaAgen = String(r[14] || "").trim();      // Kolom O (Nama Agen)
+        
+        var devFromIdAgen = extractDeviceNum(idAgenRaw);
+        var devFromAkun = extractDeviceNum(akun);
+        
+        if (!isMaster) {
+          let isAllowed = false;
+          
+          if (isCS) {
+            var namaAgenLower = namaAgen.toLowerCase();
+            var akunLower = akun.toLowerCase();
+            
+            // Cocokkan nomor device dari Kolom N / B, atau Nama CS/Agen dari Setting
+            if ((devFromIdAgen && devFromIdAgen === csDeviceNum) || (devFromAkun && devFromAkun === csDeviceNum)) {
+              isAllowed = true;
+            } else if (allowedCSNames.length > 0 && (allowedCSNames.includes(namaAgenLower) || allowedCSNames.includes(akunLower))) {
+              isAllowed = true;
+            } else if (idAgenRaw.indexOf(csDeviceNum) !== -1 || akun.indexOf(csDeviceNum) !== -1) {
+              isAllowed = true;
+            }
+          } else if (allowedAccounts.length > 0) {
+            // Admin Biasa: Cocokkan Kolom B (Akun), Kolom N (ID Agen), atau Kolom O (Nama Agen)
+            if (allowedAccounts.includes(akun) || allowedAccounts.includes(namaAgen) || allowedAccounts.includes(idAgenRaw)) {
+              isAllowed = true;
+            }
+          }
+          
+          if (!isAllowed) continue; // Potong data yang tidak diizinkan di server
+        }
+        
+        filteredArea.push(r);
+      }
+    }
+
+    // ---------------------------------------------------------
+    // B. FILTER SHEET TICKET
+    // ---------------------------------------------------------
+    var filteredTicket = [];
+    if (rawTicket.length > 0) {
+      filteredTicket.push(rawTicket[0]); // Simpan Header
+      
+      for (var j = 1; j < rawTicket.length; j++) {
+        var tr = rawTicket[j];
+        var tAkun = String(tr[1] || "").trim();         // Kolom B (Akun)
+        var tAgenRaw = String(tr[19] || "").trim();     // Kolom T (ID Agen)
+        var tNamaAgen = String(tr[20] || "").trim();    // Kolom U (Nama Agen)
+        
+        var tDevFromAgen = extractDeviceNum(tAgenRaw);
+        var tDevFromAkun = extractDeviceNum(tAkun);
+        
+        if (!isMaster) {
+          let isAllowed = false;
+          
+          if (isCS) {
+            var tAgenLower = tAgenRaw.toLowerCase();
+            var tAkunLower = tAkun.toLowerCase();
+            var tNamaLower = tNamaAgen.toLowerCase();
+            
+            if ((tDevFromAgen && tDevFromAgen === csDeviceNum) || (tDevFromAkun && tDevFromAkun === csDeviceNum)) {
+              isAllowed = true;
+            } else if (allowedCSNames.length > 0 && (allowedCSNames.includes(tAgenLower) || allowedCSNames.includes(tAkunLower) || allowedCSNames.includes(tNamaLower))) {
+              isAllowed = true;
+            } else if (tAgenRaw.indexOf(csDeviceNum) !== -1 || tAkun.indexOf(csDeviceNum) !== -1) {
+              isAllowed = true;
+            }
+          } else if (allowedAccounts.length > 0) {
+            if (allowedAccounts.includes(tAkun) || allowedAccounts.includes(tAgenRaw) || allowedAccounts.includes(tNamaAgen)) {
+              isAllowed = true;
+            }
+          }
+          
+          if (!isAllowed) continue; // Potong data yang tidak diizinkan di server
+        }
+        
+        filteredTicket.push(tr);
+      }
+    }
+    
+    return { 
+      status: "success", 
+      area: filteredArea, 
+      ticket: filteredTicket 
+    };
+  } catch(e) {
+    return { status: "error", message: e.message };
+  }
+}
+
+// 2. Fungsi Tulis/Update Data Cepat (O(1) TextFinder)
+// searchId = ID unik yang dicari (Misal ID Akun/Ticket di Kolom A)
+// startCol = Kolom mulai update (Misal 1 untuk Kolom A, 21 untuk Kolom U)
+function updateAreaTicketMaster(sheetUrl, sheetName, searchId, startCol, dataArraySatuBaris) {
+  try {
+    var ss = SpreadsheetApp.openByUrl(sheetUrl);
+    var sheet = ss.getSheetByName(sheetName);
+    if (!sheet) return "error: Sheet " + sheetName + " tidak ditemukan";
+    
+    // Kecepatan Cahaya: TextFinder mencari string di Kolom A tanpa perlu for-loop!
+    var found = sheet.getRange("A:A").createTextFinder(String(searchId)).matchEntireCell(true).findNext();
+    
+    if (!found) {
+      // Jika tidak ketemu, tambahkan sebagai baris baru (opsional)
+      // Note: appendRow dengan elemen null akan menyisipkan cell kosong sehingga aman untuk ARRAYFORMULA
+      sheet.appendRow(dataArraySatuBaris);
+      return "success_added";
+    }
+    
+    var targetRow = found.getRow();
+    var totalKolom = dataArraySatuBaris.length;
+    
+    // PERLINDUNGAN UTAMA ARRAYFORMULA & FORMULA SPREADSHEET:
+    // Update dilakukan secara selektif per segmen. Kolom dengan nilai null atau undefined
+    // SAMA SEKALI TIDAK DITULIS/DISENTUH oleh setValues, sehingga ARRAYFORMULA tidak akan rusak (#REF!).
+    var segment = [];
+    var segmentStartCol = -1;
+    
+    for (var i = 0; i < totalKolom; i++) {
+      var val = dataArraySatuBaris[i];
+      var colNum = startCol + i;
+      
+      if (val !== null && val !== undefined) {
+        if (segmentStartCol === -1) {
+          segmentStartCol = colNum;
+        }
+        segment.push(val);
+      } else {
+        // Jika menemukan null/undefined dan ada segmen data aktif yang terkumpul, tulis segmen tersebut
+        if (segment.length > 0) {
+          sheet.getRange(targetRow, segmentStartCol, 1, segment.length).setValues([segment]);
+          segment = [];
+          segmentStartCol = -1;
+        }
+      }
+    }
+    
+    // Tulis sisa segmen jika ada di akhir array
+    if (segment.length > 0) {
+      sheet.getRange(targetRow, segmentStartCol, 1, segment.length).setValues([segment]);
+    }
+    
+    return "success_updated";
+  } catch(e) {
+    return "error: " + e.message;
+  }
+}
+
+function deleteAreaTicketNative(sheetUrl, sheetName, rowId) {
+  try {
+    var ss = SpreadsheetApp.openByUrl(sheetUrl);
+    var sheet = ss.getSheetByName(sheetName);
+    if (!sheet) return "error: Sheet tidak ditemukan";
+
+    // Fast Lookup Penghapusan Baris
+    var found = sheet.getRange("A:A").createTextFinder(String(rowId)).matchEntireCell(true).findNext();
+    if (found) {
+      sheet.deleteRow(found.getRow());
+      return "success";
+    }
+    return "error: data tidak ditemukan";
+  } catch (e) {
+    return "error: " + e.message;
   }
 }

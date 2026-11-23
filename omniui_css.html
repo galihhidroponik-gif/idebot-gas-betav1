@@ -1,0 +1,271 @@
+<style>
+    /* [OPTIMASI UI] Reset margin bawaan browser dan set tinggi dasar 100% */
+    html, body { 
+        margin: 0 !important; 
+        padding: 0 !important; 
+        background-color: #f0f2f5; 
+        font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; 
+        overflow: hidden; 
+        height: 100%; 
+        width: 100%;
+    }
+    
+    /* [OPTIMASI UI] Gunakan 100dvh agar adaptif terhadap address bar HP */
+    .main-layout { 
+        display: flex; 
+        height: 100dvh; /* Dynamic Viewport Height */
+        width: 100vw; 
+        overflow: hidden; 
+        position: relative; 
+    }
+    
+    .sidebar { 
+        width: 380px; 
+        border-right: 1px solid #e9edef; 
+        background: white; 
+        display: flex; 
+        flex-direction: column; 
+        z-index: 20;
+        transition: all 0.3s ease;
+    }
+    
+    .chat-area { 
+        flex: 1; 
+        display: flex; 
+        flex-direction: column; 
+        background: #efeae2; 
+        position: relative; 
+        z-index: 10;
+    }
+
+    @media (max-width: 768px) {
+        .sidebar { width: 100%; position: absolute; inset: 0; }
+        .chat-area { width: 100%; position: absolute; inset: 0; transform: translateX(100%); transition: transform 0.3s ease; }
+        .chat-area.active { transform: translateX(0); z-index: 30; }
+    }
+    
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-thumb { background: #ced0d1; border-radius: 10px; }
+
+    .contact-item { transition: all 0.2s; cursor: pointer; border-bottom: 1px solid #f5f6f6; }
+    .contact-item:active { background-color: #ebebeb; }
+
+    .message-bubble { 
+        max-width: 85%; 
+        padding: 8px 12px; 
+        margin-bottom: 4px; 
+        position: relative; 
+        font-size: 14px; 
+        line-height: 1.4; 
+        box-shadow: 0 1px 0.5px rgba(0,0,0,0.1); 
+        word-wrap: break-word;
+    }
+    .bubble-user { align-self: flex-start; background: white; border-radius: 0 10px 10px 10px; }
+    .bubble-admin { align-self: flex-end; background: #d9fdd3; border-radius: 10px 0 10px 10px; }
+    
+    .msg-meta { font-size: 10px; color: #667781; display: flex; justify-content: space-between; gap: 10px; margin-bottom: 2px; }
+    .msg-sender { font-weight: bold; font-size: 11px; }
+    .sender-user { color: #128c7e; }
+    .sender-admin { color: #34b7f1; }
+
+    /* Media Link & Image Styling */
+    .chat-link { color: #027eb5; text-decoration: underline; cursor: pointer; display: inline-block; word-break: break-all; }
+    .chat-link:hover { color: #015f8a; }
+    
+    /* Modifikasi Layout Gambar (Auto header / menyesuaikan) */
+    .chat-image-container { position: relative; margin-top: 8px; margin-bottom: 6px; border-radius: 8px; overflow: hidden; background: #e9edef; border: 1px solid rgba(0,0,0,0.1); width: 100%; max-width: 320px; }
+    .chat-image { width: 100%; max-height: 250px; display: block; object-fit: cover; cursor: zoom-in; transition: transform 0.2s; }
+    .chat-image:hover { transform: scale(1.02); }
+    
+    /* Button Link Gambar di Header */
+    .header-link-btn { display: flex; align-items: center; justify-content: center; color: #888; padding: 2px 5px; border-radius: 4px; transition: 0.2s; text-decoration: none; }
+    .header-link-btn:hover { background: rgba(0,0,0,0.05); color: #008069; }
+
+    /* Copy Button */
+    .copy-btn { margin-left: auto; background: none; border: none; cursor: pointer; color: #888; padding: 2px 5px; border-radius: 4px; transition: 0.2s; display: flex; align-items: center; justify-content: center; }
+    .copy-btn:hover { background: rgba(0,0,0,0.05); color: #333; }
+    .copy-icon { width: 14px; height: 14px; }
+
+    /* Lightbox Modal untuk Klik Perbesar Gambar */
+    #image-modal { display: none; position: fixed; z-index: 9999; left: 0; top: 0; width: 100vw; height: 100vh; background-color: rgba(0,0,0,0.85); backdrop-filter: blur(4px); }
+    #image-modal-content { margin: auto; display: block; max-width: 95%; max-height: 90vh; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); border-radius: 8px; object-fit: contain; }
+    .close-modal { position: absolute; top: 15px; right: 25px; color: #f1f1f1; font-size: 35px; font-weight: bold; cursor: pointer; z-index: 10000; }
+    .close-modal:hover { color: #bbb; }
+
+    .badge-wa { background-color: #e9edef; color: #667781; padding: 1px 5px; border-radius: 3px; font-size: 9px; font-weight: 600; }
+    .badge-unsub-ai { background-color: #fee2e2; color: #ef4444; padding: 1px 5px; border-radius: 3px; font-size: 9px; font-weight: 800; border: 1px solid #fecaca; }
+    
+    .input-wrapper { background: #f0f2f5; border-top: 1px solid #e9edef; padding-bottom: env(safe-area-inset-bottom); }
+    .emoji-panel { display: flex; gap: 6px; padding: 8px 12px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .emoji-btn { font-size: 16px; padding: 4px 10px; background: white; border-radius: 15px; border: 1px solid #e9edef; flex-shrink: 0; }
+    
+    .input-area { padding: 8px 12px; display: flex; align-items: flex-end; gap: 8px; }
+    .message-input { flex: 1; background: white; border-radius: 15px; padding: 10px 15px; font-size: 15px; outline: none; border: 1px solid #fff; min-height: 40px; max-height: 120px; resize: none; overflow-y: auto; }
+    
+    .spinner { width: 24px; height: 24px; border: 2px solid #f3f3f3; border-top: 2px solid #0055ff; border-radius: 50%; animation: spin 1s linear infinite; }
+    .spinner-small { width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.3); border-top: 2px solid white; border-radius: 50%; animation: spin 1s linear infinite; }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+    .switch { position: relative; display: inline-block; width: 32px; height: 18px; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 18px; }
+    .slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 2px; bottom: 2px; background-color: white; transition: .4s; border-radius: 50%; }
+    input:checked + .slider { background-color: #ef4444; }
+    input:checked + .slider:before { transform: translateX(14px); }
+    .switch-orange input:checked + .slider { background-color: #f97316; }
+    .switch-blue input:checked + .slider { background-color: #3b82f6; }
+
+    /* Sembunyikan scrollbar untuk area horizontal di header */
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+    @media print {
+        @page { margin: 1cm; size: auto; }
+        
+        body, html { 
+            margin: 0 !important; padding: 0 !important; height: auto !important; 
+            overflow: visible !important; background-color: white !important;
+        }
+        body * { visibility: hidden; }
+        
+        #finance-modal, #finance-modal * { visibility: visible; }
+        
+        .hidden, .hidden * { display: none !important; visibility: hidden !important; }
+        .no-print, .no-print * { display: none !important; visibility: hidden !important; }
+
+        th.show-on-print, td.show-on-print { display: table-cell !important; visibility: visible !important; }
+        .show-on-print * { visibility: visible !important; display: inline !important; }
+        
+        #finance-modal { 
+            position: absolute !important; left: 0 !important; top: 0 !important; width: 100% !important; 
+            height: auto !important; max-height: none !important; overflow: visible !important; 
+            background: white !important; display: block !important; z-index: 99999;
+        }
+        #finance-content, #finance-main-ui {
+            height: auto !important; overflow: visible !important; display: block !important;
+            padding: 0 !important; margin: 0 !important;
+        }
+
+        .grid { 
+            display: flex !important; 
+            flex-wrap: nowrap !important; 
+            gap: 12px !important; 
+            align-items: stretch !important; 
+        }
+        .grid > div { 
+            flex: 1 1 0 !important; 
+            min-width: 22% !important; 
+            margin-bottom: 15px !important; 
+            page-break-inside: avoid !important; 
+            width: auto !important; 
+        }
+
+        #finance-table-container, #finance-table-container > div.overflow-x-auto {
+            overflow: visible !important; height: auto !important; 
+            display: block !important; border: none !important; box-shadow: none !important;
+        }
+        
+        table { 
+            display: table !important; width: 100% !important; 
+            border-collapse: collapse !important; table-layout: auto !important; 
+        }
+        thead { display: table-header-group !important; }
+        tbody { display: table-row-group !important; }
+        tr { 
+            display: table-row !important; 
+            page-break-inside: avoid !important; 
+            page-break-after: auto !important; 
+        }
+        th, td { 
+            display: table-cell !important; 
+            border: 1px solid #000 !important; 
+            padding: 3px 4px !important; 
+            font-size: 9px !important; 
+            color: #000 !important; 
+            white-space: normal !important; 
+            word-wrap: break-word !important;
+            min-width: 0 !important; 
+        }
+        
+        td.flex:not(.no-print), th.flex:not(.no-print), td > div.flex:not(.no-print) { 
+            display: block !important; 
+        }
+        
+        .truncate, .whitespace-nowrap { white-space: normal !important; overflow: visible !important; text-overflow: clip !important; }
+        
+        #finance-print-title { 
+            border: none !important; 
+            outline: none !important; 
+            background: transparent !important; 
+            box-shadow: none !important; 
+        }
+        #finance-print-title:placeholder-shown { 
+            display: none !important; 
+            visibility: hidden !important; 
+        }
+    }
+
+    .resize-col {
+        resize: horizontal;
+        overflow: hidden;
+        position: relative;
+        min-width: 100px;
+    }
+    .resize-col::after {
+        content: "⋮";
+        position: absolute;
+        right: 4px;
+        top: 50%;
+        transform: translateY(-50%);
+        color: #94a3b8;
+        font-size: 16px;
+        pointer-events: none;
+    }
+    @media print {
+        .resize-col { resize: none !important; overflow: visible !important; }
+        .resize-col::after { display: none !important; }
+    }
+
+    @media print {
+        body.print-invoice-mode .main-layout, 
+        body.print-invoice-mode #finance-modal,
+        body.print-invoice-mode #finance-view-modal,
+        body.print-invoice-mode #finance-filter-modal,
+        body.print-invoice-mode #finance-edit-modal,
+        body.print-invoice-mode .no-print { 
+            display: none !important; 
+        }
+        
+        body.print-invoice-mode #invoice-preview-modal,
+        body.print-invoice-mode #invoice-preview-modal * {
+            visibility: visible !important;
+        }
+        
+        body.print-invoice-mode #invoice-preview-modal {
+            display: block !important;
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            height: auto !important;
+            background: white !important;
+            overflow: visible !important;
+        }
+        
+        body.print-invoice-mode #invoice-paper {
+            box-shadow: none !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            max-width: 100% !important;
+            border: none !important;
+        }
+    }
+    /* Reset WebKit Search Input Default Appearance */
+    input[type="search"]::-webkit-search-decoration,
+    input[type="search"]::-webkit-search-cancel-button,
+    input[type="search"]::-webkit-search-results-button,
+    input[type="search"]::-webkit-search-results-decoration {
+        -webkit-appearance: none;
+        appearance: none;
+    }
+</style>

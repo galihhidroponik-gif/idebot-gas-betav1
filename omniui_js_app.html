@@ -1,0 +1,3533 @@
+<script>
+    let allData = [];
+    let currentContactId = null;
+    let searchTerm = "";
+    let contactRenderLimit = 40;
+    let selectedDevice = "Semua";
+    let selectedLabel = "Semua"; 
+    let filterUnsubOnly = false;
+    let filterBelumBalasOnly = false;
+    let filterPendingOnly = false;
+    let filterUnreadOnly = false;
+    let filterNextSendFuOnly = false;
+    let filterTaskActiveOnly = false;
+    let currentActiveDeviceSetting = null; // <-- TAMBAHKAN BARIS INI
+    let sysDayTier2 = "-";
+    let sysRasioTier2 = "-";
+
+    // --- BLOK KODE BARU: State Duplikat Networking ---
+    let showDuplicateNetOnly = false;
+    let duplicateNetIds = new Set();
+    
+    function toggleDuplicateNetFilter() {
+        showDuplicateNetOnly = !showDuplicateNetOnly;
+        renderSidebar();
+    }
+
+// --- FUNGSI GLOBAL MODAL KONFIRMASI PROFESIONAL ---
+function showConfirm(title, message, onConfirm, icon = '⚠️') {
+    const modal = document.getElementById('global-confirm-modal');
+    if (!modal) {
+        if (confirm(message)) onConfirm();
+        return;
+    }
+    
+    document.getElementById('confirm-title').innerText = title || "Konfirmasi";
+    document.getElementById('confirm-message').innerText = message || "";
+    const iconEl = document.getElementById('confirm-icon');
+    if (iconEl) iconEl.innerText = icon;
+    
+    const okBtn = document.getElementById('btn-confirm-ok');
+    const cancelBtn = document.getElementById('btn-confirm-cancel');
+    
+    // Reset event listener
+    const newOkBtn = okBtn.cloneNode(true);
+    const newCancelBtn = cancelBtn.cloneNode(true);
+    okBtn.parentNode.replaceChild(newOkBtn, okBtn);
+    cancelBtn.parentNode.replaceChild(newCancelBtn, cancelBtn);
+    
+    newOkBtn.onclick = () => {
+        modal.classList.add('hidden');
+        if (typeof onConfirm === 'function') onConfirm();
+    };
+    newCancelBtn.onclick = () => {
+        modal.classList.add('hidden');
+    };
+    
+    modal.classList.remove('hidden');
+}
+
+// [FUNGSI BARU] Validasi ID Duplikat
+async function checkDuplicateAndWarn(contactId) {
+    const btnSave = document.getElementById('btn-save-profile');
+    const originalText = btnSave.innerHTML;
+    
+    // Aktifkan Loading Animation
+    btnSave.innerHTML = `<div class="flex items-center justify-center gap-2"><div class="spinner-small animate-spin"></div><span>Mengecek ID...</span></div>`;
+    btnSave.disabled = true;
+
+    return new Promise((resolve) => {
+        google.script.run
+            .withSuccessHandler((res) => {
+                // Kembalikan tombol ke kondisi semula
+                btnSave.innerHTML = originalText;
+                btnSave.disabled = false;
+
+                if (res.status === "exists") {
+                    showConfirm(
+                        "ID Networking Terdeteksi",
+                        "ID Networking '" + contactId + "' sudah terdaftar di database.\n\nApakah Anda ingin mengedit profil kontak ini?",
+                        () => {
+                            if (typeof openEditModalFromData === 'function') {
+                                openEditModalFromData(res.data);
+                            } else if (typeof openEditModal === 'function') {
+                                currentContactId = res.data[1]; 
+                                openEditModal();
+                            }
+                            resolve(true);
+                        },
+                        '⚠️'
+                    );
+                    // Jika user membatalkan konfirmasi modal
+                    const cancelBtn = document.getElementById('btn-confirm-cancel');
+                    if (cancelBtn) {
+                        const origCancel = cancelBtn.onclick;
+                        cancelBtn.onclick = () => {
+                            if (origCancel) origCancel();
+                            resolve(true); // User batal
+                        };
+                    }
+                } else {
+                    resolve(false); // ID Aman
+                }
+            })
+            .withFailureHandler((err) => {
+                btnSave.innerHTML = originalText;
+                btnSave.disabled = false;
+                showToast("❌ Error validasi ID!");
+                resolve(true); // Stop simpan jika error
+            })
+            .checkContactExistsNative(SHEET_URL, contactId);
+    });
+}
+
+// [FUNGSI PEMBANTU] Edit modal dari data array (untuk duplikat)
+function openEditModalFromData(dataRow) {
+    if (!dataRow || !dataRow[1]) return;
+    // Pastikan dataRow tersedia di allData agar openEditModal() bisa menemukannya
+    const existingIdx = allData.findIndex(r => String(r[1]).trim() === String(dataRow[1]).trim());
+    if (existingIdx === -1) {
+        allData.unshift(dataRow);
+    } else {
+        allData[existingIdx] = dataRow;
+    }
+    currentContactId = dataRow[1];
+    openEditModal();
+}
+
+    // --- VARIABEL LOGIN SISTEM ---
+    let loggedInUser = null;
+    let isMasterAdmin = false;
+    let isCS = false; // BARU: Menampung status user CS
+    let userAllowedAccounts = [];
+    let userMenuAccess = ""; // BARU: Menampung teks Akses Menu (Kolom AD Sheet Setting)
+
+    // FUNGSI CEK HAK AKSES MENU FINANCE (Master Admin, Admin Biasa, & CS Operator jika Kolom AD mengandung "finance")
+    function checkFinanceAccess() {
+        if (typeof isMasterAdmin !== 'undefined' && isMasterAdmin) return true;
+        if (typeof isCS !== 'undefined' && isCS) {
+            let menuAcc = userMenuAccess || localStorage.getItem('omni_menuAccess') || "";
+            if (typeof deviceCache !== 'undefined' && deviceCache.length > 0 && deviceCache[0].fullRow) {
+                menuAcc = String(deviceCache[0].fullRow[29] || "").trim();
+            }
+            return menuAcc.toLowerCase().includes('finance');
+        }
+        return true;
+    }
+
+    // FUNGSI KONTROL VISIBILITAS TOMBOL FINANCE (CHAT & TASK/KPI DESKTOP + MOBILE)
+    function applyFinanceAccessControl() {
+        const canAccess = checkFinanceAccess();
+        const ids = [
+            'btn-finance-chat-desktop',
+            'btn-finance-chat-mobile',
+            'btn-finance-task-desktop',
+            'btn-finance-task-mobile'
+        ];
+        ids.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) {
+                if (canAccess) el.classList.remove('hidden');
+                else el.classList.add('hidden');
+            }
+        });
+        const container = document.getElementById('btn-finance-chat-desktop-container');
+        if (container) {
+            if (canAccess) container.classList.remove('hidden');
+            else container.classList.add('hidden');
+        }
+    }
+
+    // FUNGSI CEK HAK AKSES MENU TASK & KPI (Master Admin, Admin Biasa, & CS Operator jika Kolom AD mengandung "task" atau "kpi")
+    function checkTaskAccess() {
+        if (typeof isMasterAdmin !== 'undefined' && isMasterAdmin) return true;
+        if (typeof isCS !== 'undefined' && isCS) {
+            let menuAcc = userMenuAccess || localStorage.getItem('omni_menuAccess') || "";
+            if (typeof deviceCache !== 'undefined' && deviceCache.length > 0 && deviceCache[0].fullRow) {
+                menuAcc = String(deviceCache[0].fullRow[29] || "").trim();
+            }
+            const accLower = menuAcc.toLowerCase();
+            return accLower.includes('task') || accLower.includes('kpi');
+        }
+        return true;
+    }
+
+    // FUNGSI KONTROL VISIBILITAS TOMBOL TASK & KPI (CHAT & FINANCE DESKTOP + MOBILE)
+    function applyTaskAccessControl() {
+        const canAccess = checkTaskAccess();
+        const ids = [
+            'btn-task-chat-desktop',
+            'btn-task-chat-mobile',
+            'btn-task-finance-desktop',
+            'btn-task-finance-mobile'
+        ];
+        ids.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) {
+                if (canAccess) el.classList.remove('hidden');
+                else el.classList.add('hidden');
+            }
+        });
+        const container = document.getElementById('btn-task-chat-desktop-container');
+        if (container) {
+            if (canAccess) container.classList.remove('hidden');
+            else container.classList.add('hidden');
+        }
+    }
+
+    // FUNGSI CEK HAK AKSES MENU CHAT (Master Admin, Admin Biasa, & CS Operator jika Kolom AD mengandung "chat")
+    function checkChatAccess() {
+        if (typeof isMasterAdmin !== 'undefined' && isMasterAdmin) return true;
+        if (typeof isCS !== 'undefined' && isCS) {
+            let menuAcc = userMenuAccess || localStorage.getItem('omni_menuAccess') || "";
+            if (typeof deviceCache !== 'undefined' && deviceCache.length > 0 && deviceCache[0].fullRow) {
+                menuAcc = String(deviceCache[0].fullRow[29] || "").trim();
+            }
+            return menuAcc.toLowerCase().includes('chat');
+        }
+        return true;
+    }
+
+    // FUNGSI KONTROL VISIBILITAS TOMBOL CHAT (FINANCE & TASK/KPI DESKTOP + MOBILE)
+    function applyChatAccessControl() {
+        const canAccess = checkChatAccess();
+        const ids = [
+            'btn-chat-finance-desktop',
+            'btn-chat-finance-mobile',
+            'btn-chat-task-desktop',
+            'btn-chat-task-mobile'
+        ];
+        ids.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) {
+                if (canAccess) el.classList.remove('hidden');
+                else el.classList.add('hidden');
+            }
+        });
+    }
+
+    // FUNGSI AUTO-REDIRECT CS JIKA TIDAK MEMILIKI AKSES CHAT
+    function handleCSAutoRedirect() {
+        if (typeof isCS !== 'undefined' && isCS) {
+            const hasChat = checkChatAccess();
+            // Jika CS tidak punya akses ke menu CHAT
+            if (!hasChat) {
+                // Bersihkan tampilan chat di latar belakang agar clean (tanpa spinner "Memuat data...")
+                const contactList = document.getElementById('contact-list');
+                if (contactList) contactList.innerHTML = '<div class="p-6 text-center text-gray-400 text-xs font-semibold">Menu Chat tidak diaktifkan untuk akun ini.</div>';
+                const status = document.getElementById('sync-status');
+                if (status) status.innerText = "";
+
+                const hasTask = checkTaskAccess();
+                const hasFinance = checkFinanceAccess();
+                
+                if (hasTask) {
+                    // Jika ada hak akses Task&KPI, langsung menuju ke Task&KPI
+                    openTaskDashboard();
+                } else if (hasFinance) {
+                    // Jika tidak ada Task&KPI tetapi ada Finance, langsung menuju ke Finance
+                    openFinancePanel();
+                }
+            }
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const input = document.getElementById('msg-input');
+        if (input) {
+            input.addEventListener('input', function() {
+                this.style.height = 'auto';
+                this.style.height = (this.scrollHeight) + 'px';
+            });
+        }
+        // --- CEK SESI LOGIN DI LOCALSTORAGE BROWSER ---
+        const savedUser = localStorage.getItem('omni_user');
+        if (savedUser) {
+            loggedInUser = savedUser;
+            isMasterAdmin = localStorage.getItem('omni_isMaster') === 'true';
+            isCS = localStorage.getItem('omni_isCS') === 'true'; // Muat status CS
+            userAllowedAccounts = JSON.parse(localStorage.getItem('omni_roles') || "[]");
+            userMenuAccess = localStorage.getItem('omni_menuAccess') || "";
+            
+            document.getElementById('login-modal').classList.add('hidden');
+            applyFinanceAccessControl();
+            applyTaskAccessControl();
+            applyChatAccessControl();
+            handleCSAutoRedirect();
+            
+            // Aturan 3: Jika bukan master, hilangkan tombol gerigi & Control Panel (Mobile & Desktop)
+            const btnSetting = document.getElementById('btn-setting-system');
+            if(btnSetting) {
+                if(!isMasterAdmin) btnSetting.classList.add('hidden');
+                else btnSetting.classList.remove('hidden');
+            }
+            const btnSettingDesktop = document.getElementById('btn-setting-system-desktop');
+            if(btnSettingDesktop) {
+                if(!isMasterAdmin) btnSettingDesktop.classList.add('hidden');
+                else btnSettingDesktop.classList.remove('hidden');
+            }
+            
+            // BLOK KODE BARU
+        // Variabel global untuk mengontrol interval & mencegah tabrakan data (Sync Lock)
+        let syncChatInterval;
+        let syncSettingInterval;
+        let isFetchingData = false;
+
+        // 1. Panggilan pertama kali saat web dimuat/login
+        fetchData();
+        fetchAIToken();
+        fetchSilentDeviceCache(); 
+
+        // Fungsi pembungkus untuk menjalankan interval
+        function startSyncTimers() {
+            // Hentikan dulu jika ada sisa interval sebelumnya agar tidak dobel
+            stopSyncTimers();
+
+            // 2. Loop Sinkronisasi Cepat (15 Detik) - Sheet Networking
+            syncChatInterval = setInterval(() => {
+                // Jangan tarik data baru jika penarikan sebelumnya belum selesai atau user sedang ngetik pencarian
+                if (!isFetchingData && searchTerm === "") {
+                    fetchData();
+                }
+            }, 15000);
+
+            // 3. Loop Sinkronisasi Lambat (60 Detik) - Sheet Setting & Bank Content
+            syncSettingInterval = setInterval(() => {
+                fetchAIToken();
+                fetchSilentDeviceCache();
+            }, 60000);
+        }
+
+        // Fungsi untuk menghentikan interval
+        function stopSyncTimers() {
+            clearInterval(syncChatInterval);
+            clearInterval(syncSettingInterval);
+        }
+
+        // Jalankan timer pertama kali
+        startSyncTimers();
+
+        // 4. OPTIMASI: Page Visibility API (Pengereman Kuota Google)
+        // Hentikan tarikan otomatis saat browser di-minimize atau pindah tab
+        document.addEventListener("visibilitychange", () => {
+            if (document.hidden) {
+                stopSyncTimers();
+                console.log("Tab tidak aktif, sinkronisasi dihentikan sementara (Hemat Kuota).");
+            } else {
+                // Begitu tab dibuka lagi, langsung update data 1x, lalu jalankan timer lagi
+                console.log("Tab aktif kembali, memulai ulang sinkronisasi...");
+                fetchData();
+                startSyncTimers();
+            }
+        });
+            
+            // --- INISIALISASI PWA HISTORY STATE ---
+            setTimeout(() => {
+                window.history.replaceState({ page: 'exit' }, "", window.location.pathname);
+                window.history.pushState({ page: 'dashboard' }, "", "#dashboard");
+            }, 500);
+        } else {
+            document.getElementById('login-modal').classList.remove('hidden');
+        }
+    });
+    
+    // 1. PERBAIKAN POPSTATE (Tambahkan Task Modal agar tertutup saat user klik tombol Back HP)
+    window.addEventListener('popstate', function(e) {
+    const hash = window.location.hash;
+    
+    if (hash === '' || hash === '#dashboard') {
+        // Tutup secara paksa semua panel UI yang menutupi layar
+        document.getElementById('chat-container').classList.remove('active');
+        document.getElementById('finance-modal').classList.add('hidden');
+        document.getElementById('config-modal').classList.add('hidden');
+        document.getElementById('edit-modal').classList.add('hidden');
+        
+        // [BLOK KODE BARU]: Tutup juga Modal Task & KPI
+        document.getElementById('task-dashboard-modal').classList.add('hidden');
+        
+        currentContactId = null;
+            // Cegah keluar paksa jika sudah mentok di dashboard
+            if (e.state && e.state.page === 'exit') {
+                if (confirm("Yakin akan keluar dari aplikasi?")) {
+                    window.history.back(); // Lanjutkan keluar
+                } else {
+                    window.history.pushState({ page: 'dashboard' }, "", "#dashboard"); // Batal, kembalikan ke dashboard
+                }
+            }
+        }
+    });
+
+    function doLogin() {
+        const u = document.getElementById('login-user').value.trim();
+        const p = document.getElementById('login-pass').value.trim();
+        const btn = document.getElementById('login-btn');
+        
+        if(u === "" || p === "") { showToast("Username dan Password wajib diisi!"); return; }
+        
+        btn.innerText = "Memverifikasi..."; btn.disabled = true;
+        
+        google.script.run.withSuccessHandler(res => {
+            if(res.success) {
+                loggedInUser = u;
+                isMasterAdmin = res.isMaster;
+                isCS = res.isCS || false; 
+                userAllowedAccounts = res.roles; 
+                userMenuAccess = res.menuAccess || "";
+                
+                // --- SIMPAN SESI KE LOCALSTORAGE ---
+                localStorage.setItem('omni_user', u);
+                localStorage.setItem('omni_isMaster', res.isMaster);
+                localStorage.setItem('omni_isCS', isCS); 
+                localStorage.setItem('omni_roles', JSON.stringify(res.roles));
+                localStorage.setItem('omni_menuAccess', userMenuAccess);
+                
+                document.getElementById('login-modal').classList.add('hidden');
+                showToast("Login Berhasil!");
+                applyFinanceAccessControl();
+                applyTaskAccessControl();
+                applyChatAccessControl();
+                handleCSAutoRedirect();
+                
+                const btnSetting = document.getElementById('btn-setting-system');
+                if(btnSetting) {
+                    if(!isMasterAdmin) btnSetting.classList.add('hidden');
+                    else btnSetting.classList.remove('hidden');
+                }
+                const btnSettingDesktop = document.getElementById('btn-setting-system-desktop');
+                if(btnSettingDesktop) {
+                    if(!isMasterAdmin) btnSettingDesktop.classList.add('hidden');
+                    else btnSettingDesktop.classList.remove('hidden');
+                }
+                
+                // Jalankan sistem utama karena sudah login
+                fetchData();
+                fetchAIToken();
+                fetchSilentDeviceCache(); 
+                setInterval(fetchData, 15000); 
+                setInterval(fetchAIToken, 60000);
+                
+                // --- INISIALISASI PWA HISTORY STATE ---
+                setTimeout(() => {
+                    window.history.replaceState({ page: 'exit' }, "", window.location.pathname);
+                    window.history.pushState({ page: 'dashboard' }, "", "#dashboard");
+                }, 500);
+            } else {
+                showToast(res.msg);
+                btn.innerText = "Login"; btn.disabled = false;
+            }
+        }).withFailureHandler(err => {
+            showToast("Gagal terhubung ke server.");
+            btn.innerText = "Login"; btn.disabled = false;
+        }).verifyLoginNative(SHEET_URL, u, p);
+    }
+
+// --- FUNGSI GLOBAL LOADING ---
+function showGlobalLoading(title, desc) {
+    document.getElementById('loading-title').innerText = title || "Memuat Data";
+    document.getElementById('loading-desc').innerText = desc || "Mohon tunggu sebentar...";
+    document.getElementById('global-loading-overlay').classList.remove('hidden');
+}
+
+function hideGlobalLoading() {
+    document.getElementById('global-loading-overlay').classList.add('hidden');
+}
+
+    // --- FUNGSI LOGOUT BARU (OPTIMIZED SPA MODE) ---
+    function doLogout() {
+        showConfirm("Konfirmasi Keluar", "Apakah Anda yakin ingin keluar dari akun ini?", () => {
+            // 1. Hapus cache sesi dari browser
+            localStorage.removeItem('omni_user');
+            localStorage.removeItem('omni_isMaster');
+            localStorage.removeItem('omni_isCS'); // Bersihkan juga status CS
+            localStorage.removeItem('omni_roles');
+            localStorage.removeItem('omni_menuAccess');
+            
+            // 2. Reset variabel global agar memori bersih
+            loggedInUser = null;
+            isMasterAdmin = false;
+            isCS = false;
+            userAllowedAccounts = [];
+            userMenuAccess = "";
+            applyFinanceAccessControl();
+            applyTaskAccessControl();
+            applyChatAccessControl();
+            
+            // 3. Tutup panel/chat yang sedang terbuka (Pembersihan UI)
+            closeConfigModal();
+            closeChat();
+            
+            // 4. Munculkan kembali modal login menutupi layar (Tanpa reload iframe GAS)
+            document.getElementById('login-modal').classList.remove('hidden');
+            
+            // 5. Kosongkan form input login sebelumnya
+            document.getElementById('login-user').value = "";
+            document.getElementById('login-pass').value = "";
+            
+            showToast("Anda berhasil keluar.");
+            // Ini memastikan elemen DOM bersih total dan interval timer data tidak dobel
+            window.top.location.href = GAS_URL;
+        }, '🔒');
+    }
+
+    function openChat() { 
+        document.getElementById('chat-container').classList.add('active'); 
+        const fab = document.getElementById('fab-add-contact-mobile');
+        if (fab) fab.classList.add('hidden');
+        window.history.pushState({ page: 'chat' }, "", "#chat");
+    }
+    
+    function closeChat() { 
+        document.getElementById('chat-container').classList.remove('active'); 
+        const fab = document.getElementById('fab-add-contact-mobile');
+        if (fab) fab.classList.remove('hidden');
+        currentContactId = null; 
+        renderSidebar(); 
+        if (window.location.hash === '#chat') window.history.back();
+    }
+
+    // =========================================================
+    // CONTROL PANEL LOGIC
+    // =========================================================
+    let deviceCache = [];
+
+    // FUNGSI COPY WEBHOOK (Teroptimasi untuk OneSender)
+    function copyWebhookUrl() {
+        const input = document.getElementById('webhook-url-display');
+        
+        // 1. Ambil URL dasar dan pisahkan jika sebelumnya sudah ada parameter ?device=
+        let baseUrl = input.value.split('?device=')[0]; 
+        
+        // 2. Tangkap nilai dari input form secara real-time
+        const apiUrl = document.getElementById('dev-col-9') ? document.getElementById('dev-col-9').value.toLowerCase() : "";
+        const noServer = document.getElementById('dev-col-6') ? document.getElementById('dev-col-6').value.replace(/\D/g, "") : "";
+        
+        // 3. Logika Injeksi: Jika memakai OneSender dan No Server terisi, tempelkan parameternya
+        if (apiUrl.includes('oneapi') && noServer !== "") {
+            baseUrl += '?device=' + noServer;
+        }
+        
+        // 4. Update tampilan input di UI agar pengguna melihat URL utuh yang disalin
+        input.value = baseUrl;
+        
+        // 5. Eksekusi salin ke Clipboard bawaan browser
+        input.select();
+        input.setSelectionRange(0, 99999);
+        copyToClipboard(baseUrl, null, "✅ URL Webhook disalin ke Keyboard!");
+    }
+
+    // === FUNGSI BARU: MEMBUKA MODAL MANAJEMEN DEVICE ===
+    // blok kode baru
+    function openDevicePanel() {
+        // 1. Tampilkan Modal
+        document.getElementById('config-modal').classList.remove('hidden');
+        window.history.pushState({ page: 'config' }, "", "#config");
+        
+        // 2. Langsung matikan loading dan buka area utama secara instan
+        document.getElementById('config-loading').classList.add('hidden');
+        document.getElementById('config-main').classList.remove('hidden');
+        
+        // 3. Atur Visibilitas Panel
+        document.getElementById('section-device-list').classList.remove('hidden');
+        document.getElementById('section-sys-settings').classList.add('hidden');
+        document.getElementById('config-modal-title').innerText = "📱 Manajemen Device";
+        
+        // 4. Tampilkan tombol kontrol Device (+ Tambah & Grid) di Header
+        const controls = document.getElementById('header-device-controls');
+        if(controls) { controls.classList.remove('hidden'); controls.classList.add('flex'); }
+        
+        // 5. Render list device MURNI dari data 'deviceCache' yang sudah diambil diam-diam oleh fetchSilentDeviceCache()
+        if (deviceCache.length > 0) {
+            renderDeviceList();
+        } else {
+            // Pengaman jika user mengklik sangat cepat sebelum tarikan background pertama selesai
+            showToast("Mensinkronkan perangkat dari server...");
+            fetchSilentDeviceCache(function() {
+                renderDeviceList();
+            });
+        }
+    }
+
+   // === FUNGSI BARU: MEMBUKA MODAL SETTING (GERIGI) ===
+    function openSettingPanel() {
+        if (!isMasterAdmin) {
+            showToast("Akses ditolak! Fitur Control Panel hanya dapat dibuka oleh Master Admin.");
+            return;
+        }
+        document.getElementById('config-modal').classList.remove('hidden');
+        document.getElementById('config-loading').classList.remove('hidden');
+        window.history.pushState({ page: 'config' }, "", "#config");
+        
+        document.getElementById('config-main').classList.add('hidden');
+        document.getElementById('section-device-list').classList.add('hidden');
+        document.getElementById('section-sys-settings').classList.remove('hidden');
+        
+        document.getElementById('config-modal-title').innerText = "⚙️ Pengaturan Sistem";
+        
+        // Sembunyikan tombol kontrol Device di Header saat menu Setting dibuka
+        const controls = document.getElementById('header-device-controls');
+        if(controls) { controls.classList.remove('flex'); controls.classList.add('hidden'); }
+
+        google.script.run
+            .withSuccessHandler(function(data) {
+                if (!data || typeof data !== 'object') { showToast("Data Corrupt!"); closeConfigModal(); return; }
+                
+                // MENGISI DATA UI & AI
+                const setVal = (id, val) => { if(document.getElementById(id)) document.getElementById(id).value = val; };
+                
+                setVal('ui-limit', data.ui.limitData);
+                setVal('ai-max-tokens', data.ai.maxTokens);
+                setVal('ai-temp', data.ai.temp);
+                setVal('ai-limit-history', data.ai.limitHistory);
+                setVal('ai-warmer', data.ai.warmer);
+                setVal('ai-qty-warmer', data.ai.qtyWarmer);
+                setVal('ai-model', data.ai.modelGemini);
+                setVal('ai-token', data.ai.tokenGemini);
+                
+                // MENGISI DATA SEND ARRAY
+                data.send.forEach((val, i) => { 
+                    // Jika indeks 5 (Rasio Warmer) atau 7 (Rasio Tier2) yg datanya desimal
+                    if (i === 5 || i === 7) {
+                        let persen = parseFloat(val) || 0;
+                        setVal(`send-${i}`, (persen * 100)); 
+                    } else {
+                        setVal(`send-${i}`, val); 
+                    }
+                });
+
+                // --- TRIGGER PENGECEKAN TAMPILAN AWAL ---
+                togglePesanStatis();
+
+                // GENERATE & MENGISI DATA LABELS SECARA DINAMIS
+                let lblHtml = '';
+                data.labels.forEach((lbl, i) => {
+                   lblHtml += `<div class="flex gap-2 items-center bg-[#f0f2f5] p-1.5 rounded-xl">
+                     <span class="text-[10px] font-bold w-5 text-center text-gray-500">${i+1}</span>
+                     <input id="lbl-nama-${i}" value="${lbl.nama}" class="w-1/3 bg-white px-2 py-1.5 rounded-lg text-[13px] border-none outline-none" placeholder="Nama Label">
+                     <input id="lbl-ket-${i}" value="${lbl.ket}" class="flex-1 bg-white px-2 py-1.5 rounded-lg text-[13px] border-none outline-none" placeholder="Keterangan">
+                   </div>`;
+                });
+                document.getElementById('labels-container').innerHTML = lblHtml;
+
+                // GENERATE & MENGISI DATA ADMINS SECARA DINAMIS (CHECKBOX VIEW AKUN)
+                let admHtml = '';
+                data.admins.forEach((adm, i) => {
+                   let selectedRoles = adm.role ? adm.role.split(',').map(s => s.trim()) : [];
+                   
+                   // Buat Checkbox Master Admin (Selalu di Atas)
+                   let isMaster = selectedRoles.includes('Master Admin') ? 'checked' : '';
+                   let cbHtml = `
+                     <label class="flex items-center gap-1.5 p-1.5 hover:bg-gray-100 rounded cursor-pointer border border-green-100 bg-green-50 mb-1 col-span-2 sm:col-span-1">
+                         <input type="checkbox" value="Master Admin" class="adm-role-${i} w-3.5 h-3.5 text-[#008069] rounded border-gray-300 focus:ring-[#008069]" ${isMaster}>
+                         <span class="text-[11px] font-extrabold text-[#008069]">Master Admin</span>
+                     </label>
+                   `;
+
+                   // Buat Checkbox Dinamis dari Daftar Akun di Kolom B
+                   data.akunList.forEach(akun => {
+                       let isChecked = selectedRoles.includes(akun) ? 'checked' : '';
+                       cbHtml += `
+                         <label class="flex items-center gap-1.5 p-1.5 hover:bg-gray-100 rounded cursor-pointer border border-transparent">
+                             <input type="checkbox" value="${akun}" class="adm-role-${i} w-3.5 h-3.5 text-[#008069] rounded border-gray-300 focus:ring-[#008069]" ${isChecked}>
+                             <span class="text-[11px] font-medium text-gray-700 truncate" title="${akun}">${akun}</span>
+                         </label>
+                       `;
+                   });
+
+                   admHtml += `<div class="flex flex-col gap-2 bg-gray-50 p-3 rounded-xl border border-gray-100 mb-2 shadow-sm">
+                     <div class="flex justify-between items-center mb-1">
+                         <span class="bg-gray-200 text-gray-600 font-bold px-2 py-0.5 rounded text-[10px]">Admin ${i+1}</span>
+                     </div>
+                     <div class="flex flex-col sm:flex-row gap-2 w-full">
+                         <input id="adm-user-${i}" value="${adm.user}" class="w-full sm:flex-1 bg-white px-3 py-2.5 rounded-lg text-[13px] border border-gray-200 outline-none focus:border-[#008069]" placeholder="Email / Username">
+                         <input id="adm-pass-${i}" value="${adm.pass}" class="w-full sm:flex-1 bg-white px-3 py-2.5 rounded-lg text-[13px] border border-gray-200 outline-none focus:border-[#008069]" placeholder="Password" type="text">
+                     </div>
+                     <div class="w-full mt-1 border-t border-gray-200 pt-2">
+                         <span class="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1.5 block">View Akun (C${27+i})</span>
+                         <div class="bg-white border border-gray-200 rounded-lg p-1.5 max-h-[120px] overflow-y-auto grid grid-cols-2 sm:grid-cols-3 gap-1 custom-scrollbar">
+                             ${cbHtml}
+                         </div>
+                     </div>
+                   </div>`;
+                });
+                document.getElementById('admins-container').innerHTML = admHtml;
+                
+                // Tampilkan Modal
+                document.getElementById('config-loading').classList.add('hidden');
+                document.getElementById('config-main').classList.remove('hidden');
+                
+                // Auto-resize textareas (Token, Warmer, dan Model)
+                const textareasToResize = ['ai-token', 'ai-warmer', 'ai-model'];
+                textareasToResize.forEach(id => {
+                    const el = document.getElementById(id);
+                    if(el) {
+                        el.style.height = 'auto';
+                        el.style.height = el.scrollHeight + 'px';
+                    }
+                });
+            })
+            .withFailureHandler(function(e) { showToast("Gagal memuat pengaturan!"); closeConfigModal(); })
+            .getSettingsForUI(SHEET_URL);
+    }
+
+    // --- FUNGSI BARU: MENGUBAH TAMPILAN GRID DEVICE (KHUSUS DESKTOP) ---
+    function changeGrid() {
+        const list = document.getElementById('device-list');
+        const val = document.getElementById('grid-selector').value;
+        
+        // Kembalikan ke format responsif dasar (Mobile tetap 1 kolom, Tablet kecil tetap 2)
+        list.className = 'grid grid-cols-1 sm:grid-cols-2 gap-3 transition-all duration-300';
+        
+        // Suntikkan class tailwind penimpa khusus untuk layar besar (Desktop) sesuai pilihan user
+        if (val === '1') list.classList.add('md:grid-cols-1', 'lg:grid-cols-1');
+        if (val === '2') list.classList.add('md:grid-cols-2', 'lg:grid-cols-2');
+        if (val === '3') list.classList.add('md:grid-cols-3', 'lg:grid-cols-3');
+        if (val === '4') list.classList.add('md:grid-cols-3', 'lg:grid-cols-4');
+        if (val === '5') list.classList.add('md:grid-cols-3', 'lg:grid-cols-5');
+    }
+
+
+    // blok kode baru
+    function closeConfigModal() {
+        document.getElementById('config-modal').classList.add('hidden');
+        if (window.location.hash === '#config') window.history.back();
+    }
+
+// BLOK KODE BARU
+    function saveSysSettings() {
+        const btn = document.getElementById('btn-save-sys');
+        // Menyisipkan spinner CSS ke dalam tombol Setting
+        btn.innerHTML = `<div class="flex items-center justify-center gap-2"><div class="spinner-small"></div><span>Menyimpan...</span></div>`;
+        btn.disabled = true;
+        
+        const getVal = (id) => document.getElementById(id) ? document.getElementById(id).value : "";
+        
+        // Kumpulkan Labels
+        let labelsArr = [];
+        for(let i=0; i<10; i++) {
+            labelsArr.push({ nama: getVal(`lbl-nama-${i}`), ket: getVal(`lbl-ket-${i}`) });
+        }
+        
+        // Kumpulkan Admins
+        let adminsArr = [];
+        for(let i=0; i<4; i++) {
+            // Tangkap semua checkbox yang dicentang pada admin ini
+            let roleCheckboxes = document.querySelectorAll(`.adm-role-${i}:checked`);
+            // Gabungkan valuenya dipisah koma (Misal: "Master Admin, BWA, BWKR")
+            let selectedRoles = Array.from(roleCheckboxes).map(cb => cb.value).join(', ');
+            
+            adminsArr.push({ 
+                user: getVal(`adm-user-${i}`), 
+                pass: getVal(`adm-pass-${i}`), 
+                role: selectedRoles 
+            });
+        }
+
+        // Kumpulkan Send
+        let sendArr = [];
+        for(let i=0; i<8; i++) {
+            let val = getVal(`send-${i}`);
+            // Kembalikan Rasio Warmer & Tier2 dari (50) menjadi desimal (0.5)
+            if (i === 5 || i === 7) {
+                val = (parseFloat(val) / 100) || 0;
+            }
+            sendArr.push(val);
+        }
+
+        // BUNGKUS KE DALAM OBJECT UTAMA
+        const dataObj = {
+            ui: { limitData: getVal('ui-limit') },
+            ai: {
+                maxTokens: getVal('ai-max-tokens'),
+                temp: getVal('ai-temp'),
+                limitHistory: getVal('ai-limit-history'),
+                warmer: getVal('ai-warmer'),
+                qtyWarmer: getVal('ai-qty-warmer'),
+                modelGemini: getVal('ai-model'),
+                tokenGemini: getVal('ai-token')
+            },
+            send: sendArr,
+            labels: labelsArr,
+            admins: adminsArr
+        };
+        
+        google.script.run
+            .withSuccessHandler(function(res) {
+                showToast(res);
+                btn.innerText = "Simpan Semua Pengaturan Sistem"; btn.disabled = false;
+                fetchData(); 
+            })
+            .withFailureHandler(function(err){
+                showToast("Error Server!");
+                btn.innerText = "Simpan Semua Pengaturan Sistem"; btn.disabled = false;
+            })
+            .saveGeneralSettings(SHEET_URL, dataObj); 
+    }
+
+    function renderDeviceList() {
+        const list = document.getElementById('device-list');
+        if(!list) return;
+        list.innerHTML = "";
+        
+        if(deviceCache.length === 0) {
+            list.innerHTML = "<p class='text-xs text-gray-400 italic col-span-2 md:col-span-5 text-center py-6 bg-gray-50 rounded-xl border border-dashed'>Belum ada device terdaftar.</p>";
+            return;
+        }
+        
+        // Helper: Deteksi apakah format tanggal sudah kedaluwarsa
+        function isExpired(dateStr) {
+            if (!dateStr || dateStr.trim() === "" || dateStr === "-") return false; 
+            
+            const parts = dateStr.split('/');
+            if (parts.length !== 3) return false;
+            
+            const monthMap = { 'Jan':0, 'Feb':1, 'Mar':2, 'Apr':3, 'Mei':4, 'Jun':5, 'Jul':6, 'Ags':7, 'Sep':8, 'Okt':9, 'Nov':10, 'Des':11, 'Aug':7, 'Dec':11 };
+            
+            const day = parseInt(parts[0], 10);
+            const monthStr = parts[1].substring(0, 3);
+            const month = monthMap[monthStr] !== undefined ? monthMap[monthStr] : -1;
+            const year = parseInt(parts[2], 10) + 2000;
+            
+            if (month === -1) return false;
+            
+            const expDate = new Date(year, month, day);
+            const today = new Date();
+            today.setHours(0,0,0,0);
+            expDate.setHours(0,0,0,0);
+            
+            return expDate < today; 
+        }
+        
+        deviceCache.forEach((dev, idx) => {
+            if(!dev.fullRow) return;
+            const row = dev.fullRow;
+            
+            // MAPPING DATA
+            const devName = String(row[0] || "-");      // Kolom A
+            const rasioCatatan = String(row[3] || "-"); // Kolom D (Catatan Teks Panjang)
+            const statusRun = String(row[5] || "Stop"); // Kolom F
+            const koneksiApi = String(row[15] || "-");  // Kolom P
+            
+            // MAPPING DATA BARU (IN/OUT & QTY IN/OUT)
+            const inVal = String(row[16] || "0");       // Kolom Q (IN)
+            const outVal = String(row[17] || "0%");     // Kolom R (OUT)
+            const qtInVal = String(row[18] || "0");     // Kolom S (QTIn)
+            const qtOutVal = String(row[19] || "0%");   // Kolom T (QTOut)
+            
+            const qtyAer = String(row[20] || "0");      // Kolom U
+            const dbKontak = String(row[22] || "0");    // Kolom W
+            const masaAktifRaw = String(row[24] || "-");// Kolom Y
+            
+            // DETEKSI MASA AKTIF
+            const hangusText = masaAktifRaw.toUpperCase().includes("HANGUS");
+            const expiredDate = isExpired(masaAktifRaw);
+            const isAlertMasaAktif = hangusText || expiredDate;
+            const masaAktifColor = isAlertMasaAktif ? "text-red-600 animate-pulse font-extrabold" : "text-gray-800 font-bold";
+
+            // DESAIN BADGE KONEKSI API
+            const isKoneksi = koneksiApi.toLowerCase().includes("terkoneksi");
+            const apiBadge = isKoneksi 
+                ? `<span class="text-green-700 bg-green-100 border border-green-200 px-2 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide">Terkoneksi</span>` 
+                : `<span class="text-red-700 bg-red-100 border border-red-200 px-2 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide">${koneksiApi || 'Terputus'}</span>`;
+            
+            const topBorderColor = isKoneksi ? "bg-green-400" : "bg-red-400";
+            
+            // FLOATING ALERT MASA AKTIF
+            const floatingAlert = isAlertMasaAktif 
+                ? `<div class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-red-600/95 text-white px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest text-center shadow-lg border border-red-400 backdrop-blur-sm animate-pulse z-10 w-[85%]">⚠️ URGENT!<br>Isi Ulang Pulsa</div>` 
+                : ``;
+            
+            list.innerHTML += `
+                <div class="flex flex-col p-2.5 border border-gray-200 rounded-xl bg-white hover:shadow-lg transition-all duration-300 gap-2 relative overflow-hidden ${isAlertMasaAktif ? 'opacity-90' : ''}">
+                    
+                    ${floatingAlert}
+                    
+                    <!-- Dekorasi Garis Atas -->
+                    <div class="absolute top-0 left-0 w-full h-1 ${topBorderColor}"></div>
+
+                    <!-- Header: Nama Device dan Tombol Aksi Minimalis -->
+                    <div class="border-b border-gray-100 pb-2 mt-1 flex justify-between items-start">
+                        <h4 class="font-extrabold text-[12px] text-gray-800 truncate tracking-tight pr-2 pt-1 ${isAlertMasaAktif ? 'opacity-30' : ''}" title="${devName}">💻 ${devName}</h4>
+                        
+                        <!-- TOMBOL MINIMALIS KANAN ATAS -->
+                        <div class="flex gap-1.5 shrink-0 relative z-20">
+                            <button onclick="editDevForm(${idx})" class="p-1.5 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white border border-blue-100 rounded-md transition-all shadow-sm flex items-center justify-center" title="Edit Data">
+                                <svg width="11" height="11" fill="currentColor" viewBox="0 0 16 16"><path d="M12.854.146a.5.5 0 0 0-.707 0L10.5 1.793 14.207 5.5l1.647-1.646a.5.5 0 0 0 0-.708l-3-3zm.646 6.061L9.793 2.5 3.293 9H3.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.207l6.5-6.5zm-7.468 7.468A.5.5 0 0 1 6 13.5V13h-.5a.5.5 0 0 1-.5-.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.5-.5V10h-.5a.499.499 0 0 1-.175-.032l-.179.178a.5.5 0 0 0-.11.168l-2 5a.5.5 0 0 0 .65.65l5-2a.5.5 0 0 0 .168-.11l.178-.178z"/></svg>
+                            </button>
+                            <button onclick="deleteDev(${idx})" class="p-1.5 bg-red-50 text-red-600 hover:bg-red-600 hover:text-white border border-red-100 rounded-md transition-all shadow-sm flex items-center justify-center" title="Hapus Permanen">
+                                <svg width="11" height="11" fill="currentColor" viewBox="0 0 16 16"><path d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5zm3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0V6z"/><path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1v1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z"/></svg>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Body: Grid Info (Lebih Padat) -->
+                    <div class="grid grid-cols-2 gap-y-2 gap-x-2 flex-1 mt-1 ${isAlertMasaAktif ? 'opacity-30 blur-[1px]' : ''}">
+                        
+                        <!-- Baris 1: Koneksi & Status -->
+                        <div class="flex flex-col gap-0.5">
+                            <span class="text-[8px] text-gray-400 font-bold uppercase tracking-wider">Koneksi API</span>
+                            <div class="flex items-center">${apiBadge}</div>
+                        </div>
+                        <div class="flex flex-col gap-0.5">
+                            <span class="text-[8px] text-gray-400 font-bold uppercase tracking-wider">Status Send</span>
+                            <span class="text-[11px] font-extrabold ${statusRun.toLowerCase().includes('run') ? 'text-[#008069]' : 'text-red-600'}">${statusRun}</span>
+                        </div>
+
+                        <!-- Baris 2: Catatan Ringan (Catatan Rasio) FULL WIDTH -->
+                        <div class="col-span-2 bg-yellow-50/40 border border-yellow-100 rounded px-2 py-1.5 flex flex-col gap-0.5">
+                            <span class="text-[8px] text-yellow-700 font-bold uppercase tracking-wider">Catatan Sistem</span>
+                            <span class="text-[9.5px] text-gray-600 italic leading-snug line-clamp-2" title="${rasioCatatan}">${rasioCatatan}</span>
+                        </div>
+
+                        <!-- Baris 3: Ratio 1d & Ratio 30d -->
+                        <div class="flex flex-col gap-0.5">
+                            <span class="text-[8px] text-gray-400 font-bold uppercase tracking-wider">Ratio 1d</span>
+                            <span class="text-[11px] font-bold text-gray-700">${outVal} <span class="text-[9px] text-gray-500 font-normal">(${inVal})</span></span>
+                        </div>
+                        <div class="flex flex-col gap-0.5">
+                            <span class="text-[8px] text-gray-400 font-bold uppercase tracking-wider">Ratio 30d</span>
+                            <span class="text-[11px] font-bold text-gray-700">${qtOutVal} <span class="text-[9px] text-gray-500 font-normal">(${qtInVal})</span></span>
+                        </div>
+
+                        <!-- Baris 4: Qty AEr & DB Kontak -->
+                        <div class="flex flex-col gap-0.5">
+                            <span class="text-[8px] text-gray-400 font-bold uppercase tracking-wider">Qty AEr</span>
+                            <span class="text-[11px] font-bold text-gray-700">${qtyAer} <span class="text-[8px] text-gray-400 font-normal">Antrean</span></span>
+                        </div>
+                        <div class="flex flex-col gap-0.5">
+                            <span class="text-[8px] text-gray-400 font-bold uppercase tracking-wider">DB Kontak</span>
+                            <span class="text-[11px] font-bold text-gray-700">${dbKontak} <span class="text-[8px] text-gray-400 font-normal">Nomor</span></span>
+                        </div>
+                        
+                        <!-- Baris 5: Masa Aktif (Full Width Kolom) -->
+                        <div class="col-span-2 mt-0.5 bg-gray-50 border-gray-100 p-1.5 rounded-lg border flex items-center justify-between">
+                            <span class="text-[8px] text-gray-500 font-bold uppercase tracking-wider">Masa Aktif</span>
+                            <span class="text-[10px] ${masaAktifColor}">${masaAktifRaw}</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+    }
+
+    // HELPER: Mengubah format "25/Jul/26" dari Sheet menjadi format Kalender "YYYY-MM-DD"
+    function parseDateForInput(dateStr) {
+        if (!dateStr || dateStr.trim() === "" || dateStr === "-") return "";
+        const parts = dateStr.split('/');
+        if (parts.length === 3) {
+            const monthMap = { 'Jan':'01', 'Feb':'02', 'Mar':'03', 'Apr':'04', 'Mei':'05', 'Jun':'06', 'Jul':'07', 'Ags':'08', 'Sep':'09', 'Okt':'10', 'Nov':'11', 'Des':'12', 'Aug':'08', 'Dec':'12' };
+            const day = parts[0].padStart(2, '0');
+            const month = monthMap[parts[1].substring(0,3)] || '01';
+            const year = "20" + parts[2].replace(/\D/g, '');
+            return `${year}-${month}-${day}`;
+        }
+        return "";
+    }
+
+    // HELPER: Mengubah format Kalender "YYYY-MM-DD" menjadi "DD/MMM/YY" untuk disimpan ke Sheet
+    function formatDateForSheet(dateStr) {
+        if (!dateStr) return "";
+        const parts = dateStr.split('-');
+        if (parts.length === 3) {
+            const monthMap = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'];
+            const day = parseInt(parts[2], 10);
+            const month = monthMap[parseInt(parts[1], 10) - 1];
+            const year = parts[0].substring(2, 4);
+            return `${day}/${month}/${year}`;
+        }
+        return dateStr;
+    }
+
+    // LISTENER UNTUK MENYEMBUNYIKAN PREFIX URL JIKA API MENGANDUNG "STARSENDER"
+    function togglePrefixUrlVisibility() {
+        const apiUrlInput = document.getElementById('dev-col-9').value.toLowerCase();
+        const prefixContainer = document.getElementById('dev-col-10').parentElement;
+        
+        if (apiUrlInput.includes('starsender')) {
+            prefixContainer.style.display = 'none';
+        } else {
+            prefixContainer.style.display = 'block';
+        }
+    }
+
+    // FUNGSI UNTUK MENYEMBUNYIKAN/MENAMPILKAN MENU SET. BROADCAST (JIKA STATUS BROADCAST/KIRIM PESAN (C) <> ON)
+    function toggleSetBroadcastVisibility() {
+        const el = document.getElementById('dev-col-2');
+        const wrapper = document.getElementById('wrapper-set-broadcast');
+        if (el && wrapper) {
+            if (el.value === 'ON') {
+                wrapper.classList.remove('hidden');
+            } else {
+                wrapper.classList.add('hidden');
+            }
+        }
+    }
+    
+    // Pasang event listener ke input API URL dan Status Broadcast
+    document.addEventListener('DOMContentLoaded', () => {
+        const el9 = document.getElementById('dev-col-9');
+        if (el9) el9.addEventListener('input', togglePrefixUrlVisibility);
+        const el2 = document.getElementById('dev-col-2');
+        if (el2) el2.addEventListener('change', toggleSetBroadcastVisibility);
+    });
+
+    function openDevForm() {
+        document.getElementById('dev-title').innerText = "Tambah Device Baru";
+        document.getElementById('dev-index').value = ""; 
+        
+        // MUNCULKAN KOTAK WEBHOOK DI TAMBAH BARU (Sesuai Permintaan)
+        document.getElementById('webhook-container').classList.remove('hidden');
+
+        document.getElementById('dev-col-0').value = ""; 
+        document.getElementById('dev-col-1').value = ""; 
+        document.getElementById('dev-col-2').value = "OFF"; 
+        document.getElementById('dev-col-4').value = "NEW";
+        document.getElementById('dev-col-25').value = "50%";
+        document.getElementById('dev-col-6').value = ""; 
+        document.getElementById('dev-col-7').value = ""; 
+        document.getElementById('dev-col-8').value = ""; 
+        document.getElementById('dev-col-9').value = "https://api.starsender.online/api/send"; 
+        document.getElementById('dev-col-10').value = ""; 
+        document.getElementById('dev-col-11').value = "OFF"; 
+        document.getElementById('dev-col-12').value = ""; 
+        document.getElementById('dev-col-13').value = 
+        "Contoh output jika transfer: Queue|Transfer, Donat, beli donat keju, 10, Pcs, 3000, 30000\n"+
+        "Jika bukan bukti Transfer : Stop|Bukan bukti transfer"; 
+        document.getElementById('dev-col-23').value = "WA Biasa"; 
+        document.getElementById('dev-col-24').value = ""; 
+        setDevMenuValue(""); // Reset dropdown checklist Menu (AD)
+        
+        // Picu fungsi sembunyikan/tampilkan Prefix URL & Set Broadcast
+        togglePrefixUrlVisibility();
+        toggleSetBroadcastVisibility();
+        
+        document.getElementById('dev-modal').classList.remove('hidden');
+    }
+
+    // --- HELPER DROPDOWN CHECKLIST KELOLA DEVICE (KOLOM AD: AKSES MENU) ---
+    function toggleDevMenuDropdown(event) {
+        if (event) event.stopPropagation();
+        const panel = document.getElementById('dev-menu-dropdown-panel');
+        if (panel) {
+            panel.classList.toggle('hidden');
+        }
+    }
+
+    function updateDevMenuDisplay() {
+        const checkedBoxes = document.querySelectorAll('.dev-menu-cb:checked');
+        const vals = Array.from(checkedBoxes).map(cb => cb.value);
+        const displayEl = document.getElementById('dev-menu-display');
+        if (displayEl) {
+            displayEl.innerText = vals.length > 0 ? vals.join(', ') : 'Pilih Menu...';
+        }
+    }
+
+    function setDevMenuValue(valStr) {
+        const selected = (valStr || "").split(',').map(s => s.trim()).filter(Boolean);
+        const checkboxes = document.querySelectorAll('.dev-menu-cb');
+        checkboxes.forEach(cb => {
+            cb.checked = selected.includes(cb.value);
+        });
+        updateDevMenuDisplay();
+    }
+
+    function getDevMenuValue() {
+        const checkedBoxes = document.querySelectorAll('.dev-menu-cb:checked');
+        return Array.from(checkedBoxes).map(cb => cb.value).join(', ');
+    }
+
+    document.addEventListener('click', function(e) {
+        const panel = document.getElementById('dev-menu-dropdown-panel');
+        if (panel && !panel.classList.contains('hidden')) {
+            const btn = e.target.closest('button[onclick*="toggleDevMenuDropdown"]');
+            if (!panel.contains(e.target) && !btn) {
+                panel.classList.add('hidden');
+            }
+        }
+    });
+
+    // --- FUNGSI TOOLTIP KLIK ---
+    function showTooltip(title, text) {
+        document.getElementById('tooltip-title').innerText = title;
+        // UBAH: dari innerText ke innerHTML agar list HTML <ul><li> bisa terbaca
+        document.getElementById('tooltip-text').innerHTML = text; 
+        document.getElementById('global-tooltip-modal').classList.remove('hidden');
+    }
+
+    // --- BLOK KODE BARU: RENDER KARTU MANAJEMEN DEVICE DI TOOLTIP ---
+    function showSingleDeviceTooltip() {
+        if (!currentActiveDeviceSetting || !currentActiveDeviceSetting.fullRow) return;
+        
+        const row = currentActiveDeviceSetting.fullRow;
+        
+        // Helper Deteksi Expired
+        function isExpired(dateStr) {
+            if (!dateStr || dateStr.trim() === "" || dateStr === "-") return false; 
+            const parts = dateStr.split('/');
+            if (parts.length !== 3) return false;
+            const monthMap = { 'Jan':0, 'Feb':1, 'Mar':2, 'Apr':3, 'Mei':4, 'Jun':5, 'Jul':6, 'Ags':7, 'Sep':8, 'Okt':9, 'Nov':10, 'Des':11, 'Aug':7, 'Dec':11 };
+            const day = parseInt(parts[0], 10);
+            const month = monthMap[parts[1].substring(0, 3)] !== undefined ? monthMap[parts[1].substring(0, 3)] : -1;
+            const year = parseInt(parts[2], 10) + 2000;
+            if (month === -1) return false;
+            const expDate = new Date(year, month, day);
+            const today = new Date();
+            today.setHours(0,0,0,0); expDate.setHours(0,0,0,0);
+            return expDate < today; 
+        }
+
+        const devName = String(row[0] || "-");      
+        const rasioCatatan = String(row[3] || "-"); 
+        const statusRun = String(row[5] || "Stop"); 
+        const koneksiApi = String(row[15] || "-");  
+        const inVal = String(row[16] || "0");       
+        const outVal = String(row[17] || "0%");     
+        const qtInVal = String(row[18] || "0");     
+        const qtOutVal = String(row[19] || "0%");   
+        const qtyAer = String(row[20] || "0");      
+        const dbKontak = String(row[22] || "0");    
+        const masaAktifRaw = String(row[24] || "-");
+        
+        const isAlertMasaAktif = masaAktifRaw.toUpperCase().includes("HANGUS") || isExpired(masaAktifRaw);
+        const masaAktifColor = isAlertMasaAktif ? "text-red-600 animate-pulse font-extrabold" : "text-gray-800 font-bold";
+
+        const isKoneksi = koneksiApi.toLowerCase().includes("terkoneksi");
+        const apiBadge = isKoneksi 
+            ? `<span class="text-green-700 bg-green-100 border border-green-200 px-2 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide">Terkoneksi</span>` 
+            : `<span class="text-red-700 bg-red-100 border border-red-200 px-2 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide">${koneksiApi || 'Terputus'}</span>`;
+        
+        const topBorderColor = isKoneksi ? "bg-green-400" : "bg-red-400";
+        
+        const cardHtml = `
+            <div class="flex flex-col p-2.5 border border-gray-200 rounded-xl bg-white relative overflow-hidden text-left mt-2 shadow-sm">
+                <div class="absolute top-0 left-0 w-full h-1 ${topBorderColor}"></div>
+                <div class="border-b border-gray-100 pb-2 mt-1 flex justify-between items-start">
+                    <h4 class="font-extrabold text-[13px] text-gray-800 truncate tracking-tight pt-1">💻 ${devName}</h4>
+                    
+                    <!-- [PERBAIKAN] Tombol Edit Device untuk open dari Tooltips -->
+                    <button onclick="openEditActiveDevice()" class="p-1.5 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white border border-blue-100 rounded-md transition-all shadow-sm flex items-center justify-center" title="Edit Pengaturan">
+                        <svg width="11" height="11" fill="currentColor" viewBox="0 0 16 16"><path d="M12.854.146a.5.5 0 0 0-.707 0L10.5 1.793 14.207 5.5l1.647-1.646a.5.5 0 0 0 0-.708l-3-3zm.646 6.061L9.793 2.5 3.293 9H3.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.207l6.5-6.5zm-7.468 7.468A.5.5 0 0 1 6 13.5V13h-.5a.5.5 0 0 1-.5-.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.5-.5V10h-.5a.499.499 0 0 1-.175-.032l-.179.178a.5.5 0 0 0-.11.168l-2 5a.5.5 0 0 0 .65.65l5-2a.5.5 0 0 0 .168-.11l.178-.178z"/></svg>
+                    </button>
+                </div>
+                <div class="grid grid-cols-2 gap-y-3 gap-x-2 flex-1 mt-3">
+                    <div class="flex flex-col gap-0.5">
+                        <span class="text-[8px] text-gray-400 font-bold uppercase tracking-wider">Koneksi API</span>
+                        <div class="flex items-center">${apiBadge}</div>
+                    </div>
+                    <div class="flex flex-col gap-0.5">
+                        <span class="text-[8px] text-gray-400 font-bold uppercase tracking-wider">Status Send</span>
+                        <span class="text-[12px] font-extrabold ${statusRun.toLowerCase().includes('run') ? 'text-[#008069]' : 'text-red-600'}">${statusRun}</span>
+                    </div>
+                    <div class="col-span-2 bg-yellow-50/40 border border-yellow-100 rounded px-2 py-2 flex flex-col gap-0.5">
+                        <span class="text-[8px] text-yellow-700 font-bold uppercase tracking-wider">Catatan Sistem</span>
+                        <span class="text-[10.5px] text-gray-700 italic leading-snug">${rasioCatatan}</span>
+                    </div>
+                    <div class="flex flex-col gap-0.5">
+                        <span class="text-[8px] text-gray-400 font-bold uppercase tracking-wider">Ratio 1d</span>
+                        <span class="text-[12px] font-bold text-gray-700">${outVal} <span class="text-[9px] text-gray-500 font-normal">(${inVal})</span></span>
+                    </div>
+                    <div class="flex flex-col gap-0.5">
+                        <span class="text-[8px] text-gray-400 font-bold uppercase tracking-wider">Ratio 30d</span>
+                        <span class="text-[12px] font-bold text-gray-700">${qtOutVal} <span class="text-[9px] text-gray-500 font-normal">(${qtInVal})</span></span>
+                    </div>
+                    <div class="flex flex-col gap-0.5">
+                        <span class="text-[8px] text-gray-400 font-bold uppercase tracking-wider">Qty AEr</span>
+                        <span class="text-[12px] font-bold text-gray-700">${qtyAer}</span>
+                    </div>
+                    <div class="flex flex-col gap-0.5">
+                        <span class="text-[8px] text-gray-400 font-bold uppercase tracking-wider">DB Kontak</span>
+                        <span class="text-[12px] font-bold text-gray-700">${dbKontak}</span>
+                    </div>
+                    <div class="flex flex-col gap-0.5">
+                        <span class="text-[8px] text-gray-400 font-bold uppercase tracking-wider">Day Tier 2</span>
+                        <span class="text-[12px] font-bold text-[#008069]">${sysDayTier2}</span>
+                    </div>
+                    <div class="flex flex-col gap-0.5">
+                        <span class="text-[8px] text-gray-400 font-bold uppercase tracking-wider">Rasio Tier 2</span>
+                        <span class="text-[12px] font-bold text-[#008069]">${sysRasioTier2}</span>
+                    </div>
+                    <div class="col-span-2 mt-1 bg-gray-50 border-gray-100 p-2 rounded-lg border flex items-center justify-between">
+                        <span class="text-[8px] text-gray-500 font-bold uppercase tracking-wider">Masa Aktif</span>
+                        <span class="text-[11px] ${masaAktifColor}">${masaAktifRaw}</span>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        showTooltip("Status Manajemen Device", cardHtml);
+    }
+
+    // BLOK KODE BARU: Rute Fungsi Edit dari Tooltip ke Form
+    function openEditActiveDevice() {
+        if (!currentActiveDeviceSetting) return;
+        
+        // Cari posisi index array device saat ini di memori RAM browser
+        const idx = deviceCache.findIndex(d => d.providerId === currentActiveDeviceSetting.providerId);
+        
+        if (idx !== -1) {
+            closeTooltip();       // Tutup tooltip melayang
+            editDevForm(idx);     // Buka modal edit form device seketika
+            
+            // [PERBAIKAN] Tarik ulang Bank Content dari server agar tidak kosong
+            document.getElementById('bank-content-tbody').innerHTML = `<tr><td colspan="4" class="py-4 text-center text-[10px] text-green-600 italic font-bold animate-pulse">Menarik data Bank Content terbaru...</td></tr>`;
+            
+            if (SHEET_URL) {
+                google.script.run
+                    .withSuccessHandler(function(data) {
+                        if (data && data.bankContent) {
+                            globalBankContentCache = data.bankContent; // Simpan ke memory
+                            renderBankContentUI(); // Render ulang tabelnya
+                        } else {
+                            renderBankContentUI(); // Render peringatan jika benar-benar kosong
+                        }
+                    })
+                    .getSettingsForUI(SHEET_URL);
+            }
+                
+        } else {
+            showToast("⚠️ Device tidak ditemukan di data cache!");
+        }
+    }
+
+    function closeTooltip() {
+        document.getElementById('global-tooltip-modal').classList.add('hidden');
+    }
+
+    function editDevForm(idx) {
+        const dev = deviceCache[idx];
+        const rowData = dev.fullRow; 
+        if(!rowData) return;
+        
+        document.getElementById('dev-title').innerText = "Edit Pengaturan Device";
+        document.getElementById('dev-index').value = idx;
+        
+        // MUNCULKAN KOTAK WEBHOOK
+        if(document.getElementById('webhook-container')) document.getElementById('webhook-container').classList.remove('hidden');
+
+        const setVal = (id, val) => { if(document.getElementById(id)) document.getElementById(id).value = val; };
+
+        setVal('dev-col-0', rowData[0] || ""); 
+        setVal('dev-col-1', rowData[1] || ""); 
+        setVal('dev-col-2', rowData[2] || "ON"); 
+        setVal('dev-col-4', rowData[4] || ""); // <--- Ini membaca Kolom E (Auto Label) (Index 4)
+        setVal('dev-col-6', rowData[6] || ""); 
+        setVal('dev-col-7', rowData[7] || ""); 
+        setVal('dev-col-8', rowData[8] || ""); 
+        setVal('dev-col-9', rowData[9] || ""); 
+        setVal('dev-col-10', rowData[10] || ""); 
+        setVal('dev-col-11', rowData[11] || "ON"); 
+        setVal('dev-col-12', rowData[12] || ""); 
+        setVal('dev-col-13', rowData[13] || ""); // <--- Kolom N (Sekarang kosong, biarkan saja)
+        setVal('dev-col-23', rowData[23] || "WA Biasa"); 
+        setVal('dev-col-24', parseDateForInput(rowData[24])); 
+        setVal('dev-col-25', rowData[25] || ""); 
+        // [BARU] Panggil variabel global ke modal Edit Device
+        setVal('dev-view-send-6', sysDayTier2);
+        setVal('dev-view-send-7', parseFloat(sysRasioTier2) || 0);
+        setVal('dev-col-27', rowData[27] || ""); // BLOK KODE BARU: Kolom AB (Rekening)
+        setVal('dev-col-28', rowData[28] || ""); // BLOK KODE BARU: Kolom AC (Logo)
+        setDevMenuValue(rowData[29] || "");      // BLOK KODE BARU: Kolom AD (Akses Menu)
+        
+        togglePrefixUrlVisibility();
+        toggleSetBroadcastVisibility();
+        
+        // MUNCULKAN DULU MODALNYA
+        currentBankContentAkun = String(rowData[1] || "").trim(); renderBankContentUI();
+        document.getElementById('dev-modal').classList.remove('hidden');
+        
+        // SETELAH MODAL MUNCUL, KALKULASI TINGGI TEXTAREA
+        const textareasToResize = ['dev-col-12', 'dev-col-13'];
+
+        setTimeout(() => {
+            textareasToResize.forEach(id => {
+                const el = document.getElementById(id);
+                if(el) {
+                    el.style.height = 'auto';
+                    // Set minimal batas tinggi jika scrollHeight terlalu kecil
+                    el.style.height = (el.scrollHeight > 80 ? el.scrollHeight : 100) + 'px';
+                }
+            });
+        }, 150); // Jeda 150ms agar HP selesai merender elemen sebelum diukur
+     }
+
+   function saveDevData() {
+        const idx = document.getElementById('dev-index').value;
+        const btn = document.getElementById('btn-save-dev');
+        
+        // HELPER PENGAMAN: Jika input HTML dihapus/tidak ada, kembalikan string kosong tanpa Eror Crash
+        const getVal = (id) => {
+            const el = document.getElementById(id);
+            return el ? el.value.trim() : "";
+        };
+
+        // 1. AMBIL NILAI VALIDASI DENGAN AMAN
+        const col0Val = getVal('dev-col-0'); // Device Name
+        const col1Val = getVal('dev-col-1'); // Akun CS
+        const col6Val = getVal('dev-col-6'); // No Server
+        
+        // 2. LOGIKA VALIDASI KETAT
+        if (col0Val === "") { showToast("⚠️ Device Name (A) tidak boleh kosong!"); return; }
+        if (col1Val === "") { showToast("⚠️ Akun CS (B) tidak boleh kosong!"); return; }
+        // BLOK KODE BARU
+        if (col6Val === "") { showToast("⚠️ No Server (G) tidak boleh kosong!"); return; }
+        // Menyisipkan spinner CSS ke dalam tombol Device
+        btn.innerHTML = `<div class="flex items-center justify-center gap-2"><div class="spinner-small"></div><span>Menyimpan...</span></div>`; 
+        btn.disabled = true;
+
+        const rawDate = getVal('dev-col-24');
+        const formattedDate = formatDateForSheet(rawDate);
+
+        // 3. KUMPULKAN DATA DENGAN AMAN (Anti-Crash)
+        const dataObj = {
+            col0: col0Val,
+            col1: col1Val,
+            col2: getVal('dev-col-2'),
+            col4: getVal('dev-col-4'), 
+            col6: col6Val,
+            col7: getVal('dev-col-7'),
+            col8: getVal('dev-col-8'),
+            col9: getVal('dev-col-9'),
+            col10: getVal('dev-col-10'),
+            col11: getVal('dev-col-11'),
+            col12: getVal('dev-col-12'),
+            col13: getVal('dev-col-13'), 
+            col23: getVal('dev-col-23'),
+            col24: formattedDate,
+            col25: getVal('dev-col-25'),
+            col27: getVal('dev-col-27'), // BLOK KODE BARU (Kirim Rekening)
+            col28: getVal('dev-col-28'), // BLOK KODE BARU (Kirim Logo)
+            col29: getDevMenuValue()    // BLOK KODE BARU (Kolom AD: Akses Menu)
+        };
+        
+        // 4. KIRIM KE BACKEND MASTER
+        google.script.run
+            .withFailureHandler(function(err) {
+                showToast("❌ Eror Server: " + err.message);
+                btn.innerText = "Simpan Semua Perubahan"; 
+                btn.disabled = false; 
+            })
+            .withSuccessHandler(function(res) { 
+                showToast(res); 
+                closeDevForm(); 
+                // PERBAIKAN: Gunakan openDevicePanel() agar list device ter-refresh dengan benar
+                openDevicePanel(); 
+                
+                // Mengembalikan state tombol
+                btn.innerText = "Simpan Semua Perubahan"; 
+                btn.disabled = false; 
+
+                // AUTOSINKRONISASI OTOMATIS JIKA MANAJEMEN DEVICE SELESAI DIEDIT ATAU TAMBAH BARU
+                syncDeviceDataAfterChange("🔄 Autosinkronisasi data device terbaru...");
+            })
+            .saveDeviceDataNative(SHEET_URL, idx, dataObj);
+    }
+
+   
+    function closeDevForm() { document.getElementById('dev-modal').classList.add('hidden'); }
+    
+    // BLOK KODE BARU
+    function deleteDev(idx) {
+        showConfirm("Hapus Perangkat", "Yakin ingin menghapus device ini secara permanen?", () => {
+            // Memunculkan animasi loading bawaan modal dan menyembunyikan list
+            document.getElementById('config-main').classList.add('hidden');
+            document.getElementById('config-loading').classList.remove('hidden');
+            
+            google.script.run
+                .withFailureHandler(function(err) {
+                    showToast("❌ Eror Server: " + err.message);
+                    openDevicePanel(); // Refresh UI untuk menghilangkan loading
+                })
+                .withSuccessHandler(function(res) { 
+                    showToast(res); 
+                    openDevicePanel(); // Refresh UI secara otomatis
+
+                    // AUTOSINKRONISASI OTOMATIS SETELAH DEVICE DIHAPUS
+                    syncDeviceDataAfterChange("🔄 Autosinkronisasi setelah hapus device...");
+                })
+                .deleteDeviceFromUI(SHEET_URL, idx);
+        }, '🗑️');
+    }
+
+    function deleteProfile() {
+        if (!currentContactId) return;
+        
+        // Meminta konfirmasi sebelum menghapus
+        showConfirm("Hapus Kontak Permanen", "Yakin ingin menghapus profil/kontak ini secara permanen? Data yang dihapus tidak bisa dikembalikan.", () => {
+            const btn = document.getElementById('btn-save-profile');
+            // BLOK KODE BARU
+            if (btn) {
+                // Menyisipkan spinner CSS ke dalam tombol saat menghapus
+                btn.innerHTML = `<div class="flex items-center justify-center gap-2"><div class="spinner-small"></div><span>Menghapus...</span></div>`;
+                btn.disabled = true;
+                btn.classList.add('opacity-70');
+            }
+
+            // Panggil fungsi di Google Apps Script (Backend)
+            google.script.run
+                .withSuccessHandler(function(status) {
+                    if (status === "success") {
+                        // Hapus data secara lokal dari allData
+                        allData = allData.filter(r => r[1] !== currentContactId);
+                        
+                        // Tutup modal dan reset tampilan chat
+                        document.getElementById('edit-modal').classList.add('hidden');
+                        closeChat();
+                        renderSidebar();
+                        
+                        showToast("✅ Profil berhasil dihapus!");
+                    } else {
+                        showToast("❌ Gagal menghapus profil dari Database.");
+                    }
+                    
+                    if (btn) {
+                        btn.innerText = "Simpan";
+                        btn.disabled = false;
+                        btn.classList.remove('opacity-70');
+                    }
+                })
+                .withFailureHandler(function(e) {
+                    showToast("❌ Error koneksi saat menghapus.");
+                    if (btn) {
+                        btn.innerText = "Simpan";
+                        btn.disabled = false;
+                        btn.classList.remove('opacity-70');
+                    }
+                })
+                .deleteContactData(SHEET_URL, currentContactId); // Fungsi pemanggil backend
+        }, '⚠️');
+    }
+
+// ===== UBAH FUNGSI fetchData() AGAR MENGIRIM ROLE KE SERVER =====
+    // Tambahkan parameter isManual = false
+function fetchData(isManual = false) {
+    if (!SHEET_URL) return;
+    if (!checkChatAccess()) {
+        const contactList = document.getElementById('contact-list');
+        if (contactList) contactList.innerHTML = '<div class="p-6 text-center text-gray-400 text-xs font-semibold">Menu Chat tidak diaktifkan untuk akun ini.</div>';
+        const status = document.getElementById('sync-status');
+        if (status) status.innerText = "";
+        return;
+    }
+    if (searchTerm !== "") return; 
+    
+    // BLOK KODE BARU: Kunci proses agar tidak tabrakan
+    isFetchingData = true;
+
+    const status = document.getElementById('sync-status');
+    if(status) status.innerText = "Sinkronisasi...";
+
+    // Munculkan loading tengah jika tombol diklik manual
+    if(isManual) showGlobalLoading("Sinkronisasi Obrolan", "Menarik data chat terbaru dari server...");
+    
+    google.script.run
+    .withSuccessHandler(function(data) {
+        isFetchingData = false; // Buka Kunci
+        if(isManual) hideGlobalLoading(); // Sembunyikan loading
+
+        if (!data || !Array.isArray(data)) {
+            if(status) status.innerText = "Gagal memuat data (Data tidak valid).";
+            document.getElementById('contact-list').innerHTML = '<div class="p-8 text-center text-red-400 text-xs italic">Koneksi API / Data Master bermasalah.</div>';
+            return;
+        }
+
+        allData = data.filter(row => {
+            const id = String(row[1] || "").trim();
+            if (id === "" || id === 'Unique ID') return false;
+            
+            if (!isMasterAdmin) {
+                if (typeof isCS !== 'undefined' && isCS) {
+                    const csDeviceNum = userAllowedAccounts[0].substring(3);
+                    const noServerRow = String(row[4] || "").trim();
+                    if (noServerRow !== csDeviceNum) return false;
+                } else {
+                    const akunChat = String(row[0] || "").trim();
+                    if (!userAllowedAccounts.includes(akunChat)) return false;
+                }
+            }
+            return true;
+        });
+
+        updateDeviceFilter(); updateLabelFilter(); renderSidebar();
+        if (currentContactId) refreshChat();
+        if(status) status.innerText = "Terakhir: " + new Date().toLocaleTimeString();
+
+        // Silent fetch ticketDataCache jika belum ada agar count task & filter Task Active langsung siap
+        if ((typeof ticketDataCache === 'undefined' || !ticketDataCache || ticketDataCache.length <= 1) && !window.isFetchingTicketDataSilent) {
+            window.isFetchingTicketDataSilent = true;
+            google.script.run
+                .withSuccessHandler(function(res) {
+                    window.isFetchingTicketDataSilent = false;
+                    if (res && res.status === "success") {
+                        ticketDataCache = res.ticket || [];
+                        areaDataCache = res.area || [];
+                        renderSidebar();
+                        if (typeof updateCustomerTaskBadge === 'function') updateCustomerTaskBadge();
+                    }
+                })
+                .withFailureHandler(function() {
+                    window.isFetchingTicketDataSilent = false;
+                })
+                .getAreaTicketDataNative(SHEET_URL, (userAllowedAccounts || []).join(','));
+        }
+    })
+    .withFailureHandler(function(error) {
+        isFetchingData = false; // Buka Kunci
+        if(isManual) hideGlobalLoading(); // Sembunyikan loading
+        
+        if(status) status.innerText = "Gagal Sinkronisasi: Timeout/Error";
+        document.getElementById('contact-list').innerHTML = '<div class="p-8 text-center text-red-400 text-xs italic">Gagal terhubung ke Server Master.</div>';
+    })
+    .getSheetData(SHEET_URL, (userAllowedAccounts || []).join(','));
+}
+
+    // ===== FUNGSI SERVER SIDE SEARCH DENGAN ANIMASI LOADING =====
+    function handleServerSearch(e) {
+        if (e.key === 'Enter') {
+            const kw = document.getElementById('search-input').value.trim();
+            if (kw.length < 3) {
+                showToast("Ketik minimal 3 huruf untuk mencari di Database.");
+                return;
+            }
+            
+            const syncStatus = document.getElementById('sync-status');
+            const searchSpinner = document.getElementById('search-spinner');
+            
+            // Tampilkan animasi loading
+            if (searchSpinner) searchSpinner.classList.remove('hidden');
+            if (syncStatus) syncStatus.innerText = "Mencari di seluruh Database 2000+ data...";
+            
+            google.script.run
+            .withSuccessHandler(function(data) {
+                // Matikan animasi loading setelah sukses
+                if (searchSpinner) searchSpinner.classList.add('hidden');
+                
+                if(data && data.length > 1) { 
+                    const newRows = data.filter(row => {
+                        const id = String(row[1] || "").trim();
+                        return id !== "" && id !== 'Unique ID';
+                    });
+                    
+                    newRows.forEach(newRow => {
+                        const existingIndex = allData.findIndex(r => r[1] === newRow[1]);
+                        if (existingIndex > -1) {
+                            allData[existingIndex] = newRow; 
+                        } else {
+                            allData.push(newRow); 
+                        }
+                    });
+                    
+                    updateDeviceFilter(); updateLabelFilter(); renderSidebar();
+                    if (syncStatus) syncStatus.innerText = `Ditemukan ${newRows.length} kontak lama!`;
+                    showToast(`Berhasil menarik ${newRows.length} data dari Database.`);
+                } else {
+                    if (syncStatus) syncStatus.innerText = "Kontak tidak ditemukan di Database.";
+                    showToast("Pencarian tidak ditemukan.");
+                }
+            })
+            .withFailureHandler(function(e) {
+                // Matikan animasi loading jika gagal
+                if (searchSpinner) searchSpinner.classList.add('hidden');
+                if (syncStatus) syncStatus.innerText = "Gagal mencari di server.";
+                showToast("❌ Server Eror saat mencari.");
+            })
+            .searchContactNative(SHEET_URL, kw);
+        }
+    }
+
+    // --- HELPER UNTUK ESCAPE ATRIBUT HTML ---
+    function escapeHtmlAttr(str) {
+        if (!str) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+
+    // --- HELPER KONSISTEN COPY TO CLIPBOARD DENGAN FALLBACK ---
+    function copyToClipboard(text, btnElement, successMsg = "Teks berhasil disalin!") {
+        if (!text) {
+            showToast("⚠️ Tidak ada teks untuk disalin");
+            return;
+        }
+
+        const showSuccessFeedback = () => {
+            showToast(successMsg);
+            if (btnElement) {
+                const originalIcon = btnElement.innerHTML;
+                btnElement.innerHTML = `<svg width="12" height="12" class="text-green-600 inline-block" fill="currentColor" viewBox="0 0 16 16"><path d="M10.97 4.97a.75.75 0 0 1 1.07 1.05l-3.99 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.267.267 0 0 1 .02-.022z"/></svg>`;
+                setTimeout(() => {
+                    btnElement.innerHTML = originalIcon;
+                }, 2000);
+            }
+        };
+
+        const fallbackCopy = (str) => {
+            try {
+                const textArea = document.createElement("textarea");
+                textArea.value = str;
+                textArea.style.position = "fixed";
+                textArea.style.top = "0";
+                textArea.style.left = "0";
+                textArea.style.width = "2em";
+                textArea.style.height = "2em";
+                textArea.style.padding = "0";
+                textArea.style.border = "none";
+                textArea.style.outline = "none";
+                textArea.style.boxShadow = "none";
+                textArea.style.background = "transparent";
+                document.body.appendChild(textArea);
+                textArea.focus();
+                textArea.select();
+
+                const successful = document.execCommand('copy');
+                document.body.removeChild(textArea);
+                if (successful) {
+                    showSuccessFeedback();
+                } else {
+                    showToast("❌ Gagal menyalin teks");
+                }
+            } catch (err) {
+                console.error("Fallback copy error:", err);
+                showToast("❌ Gagal menyalin teks");
+            }
+        };
+
+        if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(text).then(() => {
+                showSuccessFeedback();
+            }).catch(err => {
+                console.warn("Clipboard API failed, trying fallback:", err);
+                fallbackCopy(text);
+            });
+        } else {
+            fallbackCopy(text);
+        }
+    }
+
+    // --- FUNGSI MENGAMBIL SISA TOKEN AI DARI SPREADSHEET & NOTIFIKASI EROR ---
+    function fetchAIToken() {
+        if (!SHEET_URL) return;
+        google.script.run
+            .withSuccessHandler(function(tokenStr) {
+                const display = document.getElementById('ai-token-display');
+                const badge = document.getElementById('notif-badge');
+                const notifList = document.getElementById('notif-list');
+
+                if(tokenStr) {
+                    // Memecah data berdasarkan tanda "~"
+                    const parts = tokenStr.split('~');
+                    
+                    // Elemen [0] adalah Token Utama
+                    display.innerText = parts[0].trim() || "Info Token Kosong";
+
+                    // Elemen [1] dst adalah Notifikasi Eror
+                    const notifs = parts.slice(1);
+                    if (notifs.length > 0) {
+                        badge.innerText = notifs.length;
+                        badge.classList.remove('hidden');
+
+                        // Bangun daftar list notifikasi
+                        notifList.innerHTML = '';
+                        notifs.forEach(notif => {
+                            const cleanNotif = notif.trim();
+                            if(cleanNotif === "") return;
+                            
+                            // Amankan teks dari kutip dan entitas HTML agar tidak merusak atribut HTML saat dicopy
+                            const safeText = escapeHtmlAttr(cleanNotif);
+                            
+                            notifList.innerHTML += `
+                                <div class="bg-white p-2.5 rounded-lg border border-gray-200 shadow-sm relative group hover:border-red-300 transition-colors">
+                                    <p class="text-[10px] text-gray-700 whitespace-pre-wrap pr-6 line-clamp-3 group-hover:line-clamp-none transition-all">${escapeHtmlAttr(cleanNotif)}</p>
+                                    <button onclick="copyNotifData(this)" data-text="${safeText}" class="absolute top-2 right-2 text-gray-400 hover:text-blue-600 bg-gray-50 hover:bg-blue-50 rounded shadow-sm p-1.5 opacity-80 sm:opacity-0 group-hover:opacity-100 transition-all cursor-pointer" title="Copy Log Eror">
+                                        <svg width="12" height="12" fill="currentColor" viewBox="0 0 16 16"><path d="M4 1.5H3a2 2 0 0 0-2 2V14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V3.5a2 2 0 0 0-2-2h-1v1h1a1 1 0 0 1 1 1V14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1h1v-1z"/><path d="M9.5 1h-3a.5.5 0 0 0-.5.5v1a.5.5 0 0 0 .5.5h3a.5.5 0 0 0 .5-.5v-1a.5.5 0 0 0-.5-.5z"/></svg>
+                                    </button>
+                                </div>
+                            `;
+                        });
+                    } else {
+                        badge.classList.add('hidden');
+                        notifList.innerHTML = '<p class="text-[10px] text-gray-400 text-center py-4">Tidak ada notifikasi eror.</p>';
+                    }
+                } else {
+                    display.innerText = "Info Token Kosong";
+                    document.getElementById('notif-badge').classList.add('hidden');
+                }
+            })
+            .withFailureHandler(function(error) {
+                document.getElementById('ai-token-display').innerText = "Gagal memuat token";
+            })
+            .getAITokenStatus(SHEET_URL);
+    }
+
+    function copyNotifData(btn) {
+        if (!btn) return;
+        const text = btn.getAttribute('data-text') || btn.dataset.text || '';
+        copyToClipboard(text, btn, "Log disalin ke keyboard!");
+    }
+
+function getAvatarColorClass(isMe, waLabel) {
+        const labelsArray = (waLabel || "").toUpperCase().split(',').map(l => l.trim());
+        if (labelsArray.includes("XX")) return "bg-black text-white";
+        if (!isMe && labelsArray.includes("AE")) return "bg-amber-400 text-amber-900";
+        if (!isMe) return "bg-red-500 text-white";
+        return "bg-green-500 text-white";
+    }
+
+    // --- FUNGSI BANTUAN BARU: Mengekstrak nama device dengan aman ---
+    function getDeviceNameFromId(id) {
+        if (!id) return "Default";
+        let parts = String(id).split('.');
+        if (parts.length > 1) {
+            parts.shift(); // Buang nomor HP di depan
+            return parts.join('.').trim(); // Gabungkan sisa namanya (Berjaga jika nama device pakai tanda titik)
+        }
+        return "Default";
+    }
+
+    // =====================================================================
+// FUNGSI updateDeviceFilter (DIOPTIMASI: Single-Pass Aggregation)
+// Meniadakan fungsi getDeviceStats agar tidak N+1 looping
+// =====================================================================
+function updateDeviceFilter() {
+    const selectElems = document.querySelectorAll('.device-select-elem');
+    if (selectElems.length === 0) return;
+    const oldVal = selectElems[0].value || "Semua";
+
+    // 1. Single Pass: Grouping Data Kontak Unik
+    const contactMap = new Map();
+    allData.forEach(row => {
+        const id = row[1];
+        if (!contactMap.has(id)) {
+            const labelWA = String(row[2] || "");
+            const isUnsubAI = labelWA.replace(/\s+/g, '').toUpperCase().includes("UNSUBAI");
+            const rawVal = row[25];
+            const nextSendFuVal = String(row[28] || "").trim(); // Tarik data Next Send FU
+            const isUnread = rawVal === true || String(rawVal).toLowerCase().trim() === "true" || String(rawVal).toLowerCase().trim() === "benar";
+
+            contactMap.set(id, {
+                device: String(row[3] || "Default").trim(),
+                isMe: String(row[13]).toLowerCase().trim() === "true",
+                waLabel: labelWA.trim(),
+                unsub: isUnsubAI,
+                isUnread: isUnread,
+                nextSendFu: nextSendFuVal // Masukkan ke dalam map
+            });
+        }
+    });
+
+    // 2. Single Pass: Hitung Statistik Semua & Per Device sekaligus
+    let countSemua = 0;
+    const deviceStats = {};
+
+    contactMap.forEach((c, id) => {
+        const dev = c.device;
+        
+        if (dev && dev.toLowerCase() !== 'default' && !deviceStats[dev]) {
+            deviceStats[dev] = { count: 0 };
+        }
+
+        // Terapkan toggle filter dari UI
+        const matchUnsub = !filterUnsubOnly || c.unsub;
+        const matchBelumBalas = !filterBelumBalasOnly || !c.isMe;
+        const matchUnread = !filterUnreadOnly || c.isUnread;
+        const matchNextSendFu = !filterNextSendFuOnly || isNextSendFuDue(c.nextSendFu); // LOGIKA BARU
+
+        // Jika lolos SEMUA filter (termasuk Next Send FU), tambahkan hitungan
+        if (matchUnsub && matchBelumBalas && matchUnread && matchNextSendFu) {
+            countSemua++; 
+            if (dev && dev.toLowerCase() !== 'default') {
+                deviceStats[dev].count++; 
+            }
+        }
+    });
+
+    // 3. Render Pilihan Dropdown ke SEMUA elemen dropdown perangkat (Desktop & Mobile)
+    const sortedDevices = Object.keys(deviceStats).sort();
+
+    selectElems.forEach(select => {
+        select.innerHTML = `<option value="Semua">Semua Perangkat (${countSemua})</option>`;
+
+        sortedDevices.forEach(dev => {
+            let count = deviceStats[dev].count;
+            let deviceTotalDb = "0";
+            let koneksiStatus = "";
+            let isDeviceUnknown = true;
+            let isApiKeyEmpty = true;
+            let colorCircle = '⚫';
+
+            const devSetting = deviceCache.find(d => String(d.providerId).trim() === dev);
+            if (devSetting && devSetting.fullRow) {
+                isDeviceUnknown = false;
+                deviceTotalDb = String(devSetting.fullRow[22] || "0").trim(); 
+                koneksiStatus = String(devSetting.fullRow[15] || "").toLowerCase().trim(); 
+                
+                const apiKey = String(devSetting.fullRow[8] || "").trim(); 
+                if (apiKey !== "") isApiKeyEmpty = false;
+            }
+
+            if (!isDeviceUnknown) {
+                if (isApiKeyEmpty) {
+                    colorCircle = '⚫';
+                } else if (koneksiStatus.includes('terkoneksi')) {
+                    colorCircle = '🟢';
+                } else if (koneksiStatus.includes('terputus') || koneksiStatus !== "") {
+                    colorCircle = '🔴';
+                }
+            }
+
+            const opt = document.createElement('option');
+            opt.value = dev;
+            opt.innerText = `${colorCircle} ${dev} (${count}/${deviceTotalDb})`;
+            select.appendChild(opt);
+        });
+
+        if (Array.from(select.options).some(o => o.value === oldVal)) {
+            select.value = oldVal;
+        }
+    });
+}
+    
+    // 3. TIMPA FUNGSI updateLabelFilter
+    function updateLabelFilter() {
+    const selectElems = document.querySelectorAll('.label-select-elem');
+    if (selectElems.length === 0) return;
+    const oldVal = selectElems[0].value || "Semua";
+
+    const labels = new Map();
+    const contactMap = new Map();
+    
+    allData.forEach(row => {
+        const id = row[1];
+        if (!contactMap.has(id)) {
+            const history = (row[19] || "").split(/(?:^|\n)_\n/).filter(m => m.trim());
+            const lastMsg = history.length > 0 ? history[history.length - 1] : "";
+            
+            const labelWA = String(row[2] || "");
+            const isUnsubAI = labelWA.replace(/\s+/g, '').toUpperCase().includes("UNSUBAI");
+            const rawVal = row[25];
+            const nextSendFuVal = String(row[28] || "").trim(); // Tarik data Next Send FU
+            const isUnread = rawVal === true || String(rawVal).toLowerCase().trim() === "true" || String(rawVal).toLowerCase().trim() === "benar";
+
+            contactMap.set(id, {
+                device: String(row[3] || "Default").trim(),
+                isMe: String(row[13]).toLowerCase().trim() === "true",
+                waLabel: labelWA.trim(),
+                unsub: isUnsubAI, 
+                isUnread: isUnread,
+                nextSendFu: nextSendFuVal // Masukkan ke dalam map
+            });
+        }
+    });
+
+    contactMap.forEach(c => {
+        const matchDevice = (selectedDevice === "Semua" || c.device === selectedDevice);
+        const matchUnsub = !filterUnsubOnly || c.unsub;
+        const matchBelumBalas = !filterBelumBalasOnly || !c.isMe;
+        const matchUnread = !filterUnreadOnly || c.isUnread;
+        const matchNextSendFu = !filterNextSendFuOnly || isNextSendFuDue(c.nextSendFu); // LOGIKA BARU
+
+        // Hitung count HANYA JIKA lolos semua filter aktif
+        if (c.waLabel && matchDevice && matchUnsub && matchBelumBalas && matchUnread && matchNextSendFu) {
+            const splitLabels = c.waLabel.split(',').map(l => l.trim()).filter(l => l !== "");
+            splitLabels.forEach(label => {
+                labels.set(label, (labels.get(label) || 0) + 1);
+            });
+        }
+    });
+    
+    let total = 0; labels.forEach(count => total += count);
+
+    selectElems.forEach(select => {
+        select.innerHTML = `<option value="Semua">Semua Label (${total})</option>`;
+        
+        Array.from(labels.keys()).sort().forEach(l => {
+            const opt = document.createElement('option');
+            opt.value = l; opt.innerText = `${l} (${labels.get(l)})`;
+            select.appendChild(opt);
+        });
+        
+        if (Array.from(select.options).some(o => o.value === oldVal)) select.value = oldVal;
+    });
+}
+
+    // 4. TIMPA FUNGSI renderSidebar
+    function renderSidebar() {
+        updateChatFilterBadges();
+        const contactList = document.getElementById('contact-list');
+        const contactMap = new Map();
+        
+        function parseTime(t) {
+            if (!t) return 0;
+            const indoDateMatch = t.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+            if (indoDateMatch) {
+                const validFormat = t.replace(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/, '$2/$1/$3');
+                return new Date(validFormat).getTime() || 0;
+            }
+            return new Date(t).getTime() || 0;
+        }
+
+        // ==========================================
+        // BLOK KODE BARU: DETEKSI DUPLIKAT NETWORKING
+        // ==========================================
+        let idCounts = {};
+        allData.forEach(row => {
+            const id = row[1];
+            if (id && id !== 'Unique ID') {
+                idCounts[id] = (idCounts[id] || 0) + 1;
+            }
+        });
+        
+        duplicateNetIds.clear();
+        let totalDuplicateRows = 0;
+        for (let id in idCounts) {
+            if (idCounts[id] > 1) {
+                duplicateNetIds.add(id);
+                totalDuplicateRows += idCounts[id];
+            }
+        }
+
+        const btnDupNet = document.getElementById('btn-duplicate-net-warning');
+        if (btnDupNet) {
+            if (duplicateNetIds.size > 0) {
+                btnDupNet.classList.remove('hidden');
+                btnDupNet.classList.add('flex');
+                
+                const countText = document.getElementById('duplicate-net-count-text');
+                if (countText) {
+                    countText.innerText = totalDuplicateRows + " Data Ganda (Klik u/ Lihat)";
+                    
+                    if (showDuplicateNetOnly) {
+                        btnDupNet.classList.replace('bg-red-500', 'bg-yellow-500');
+                        btnDupNet.classList.replace('hover:bg-red-600', 'hover:bg-yellow-600');
+                        btnDupNet.classList.remove('animate-pulse');
+                        countText.innerText = "Tutup Filter Duplikat";
+                    } else {
+                        btnDupNet.classList.replace('bg-yellow-500', 'bg-red-500');
+                        btnDupNet.classList.replace('hover:bg-yellow-600', 'hover:bg-red-600');
+                        btnDupNet.classList.add('animate-pulse');
+                    }
+                }
+            } else {
+                btnDupNet.classList.add('hidden');
+                btnDupNet.classList.remove('flex');
+                showDuplicateNetOnly = false;
+            }
+        }
+        // ==========================================
+
+        let contactsArray = [];
+
+        if (showDuplicateNetOnly) {
+            // MODE DUPLIKAT: Render semua data yang ganda tanpa disembunyikan
+            allData.forEach((row, index) => {
+                const id = row[1];
+                if (duplicateNetIds.has(id)) {
+                    const history = (row[19] || "").split(/(?:^|\n)_\n/).filter(m => m.trim());
+                    const lastMsgRaw = history.length > 0 ? history[history.length - 1] : "...";
+                    const lastLines = lastMsgRaw.split('\n');
+                    
+                    const labelWA = String(row[2] || "");
+                    const isUnsubAI = labelWA.replace(/\s+/g, '').toUpperCase().includes("UNSUBAI");
+                    const rawVal = row[25];
+                    const isUnread = rawVal === true || String(rawVal).toLowerCase().trim() === "true" || String(rawVal).toLowerCase().trim() === "benar";
+                    const nextSendFuVal = String(row[28] || "").trim();
+                    const timeP = row[15] || ""; 
+                    const timeQ = row[16] || ""; 
+                    const parsedP = parseTime(timeP);
+                    const parsedQ = parseTime(timeQ);
+                    const maxTimeVal = Math.max(parsedP, parsedQ);
+                    const displayTime = maxTimeVal === parsedP ? timeP : timeQ;
+
+                    contactsArray.push({
+                        id: id, 
+                        name: row[7] || id,
+                        isMe: String(row[13]).toLowerCase().trim() === "true",
+                        time: displayTime, 
+                        timeVal: maxTimeVal, 
+                        waLabel: labelWA,
+                        unsub: isUnsubAI, 
+                        device: String(row[3] || "Default").trim(), 
+                        biodata: String(row[9] || ""),
+                        lastMsg: lastLines.length > 1 ? lastLines.slice(1).join(' ').trim() : lastMsgRaw,
+                        isUnread: isUnread,
+                        nextSendFu: nextSendFuVal
+                    });
+                }
+            });
+        } else {
+            // MODE NORMAL: Sembunyikan duplikat dengan Map()
+            allData.forEach(row => {
+                const id = row[1];
+                if (!contactMap.has(id)) {
+                    const history = (row[19] || "").split(/(?:^|\n)_\n/).filter(m => m.trim());
+                    const lastMsgRaw = history.length > 0 ? history[history.length - 1] : "...";
+                    const lastLines = lastMsgRaw.split('\n');
+                    
+                    const labelWA = String(row[2] || "");
+                    const isUnsubAI = labelWA.replace(/\s+/g, '').toUpperCase().includes("UNSUBAI");
+                    const rawVal = row[25];
+                    const isUnread = rawVal === true || String(rawVal).toLowerCase().trim() === "true" || String(rawVal).toLowerCase().trim() === "benar";
+                    const nextSendFuVal = String(row[28] || "").trim();
+                    const timeP = row[15] || ""; 
+                    const timeQ = row[16] || ""; 
+                    
+                    const parsedP = parseTime(timeP);
+                    const parsedQ = parseTime(timeQ);
+                    
+                    const maxTimeVal = Math.max(parsedP, parsedQ);
+                    const displayTime = maxTimeVal === parsedP ? timeP : timeQ;
+
+                    contactMap.set(id, {
+                        id: id, 
+                        name: row[7] || id,
+                        isMe: String(row[13]).toLowerCase().trim() === "true",
+                        time: displayTime, 
+                        timeVal: maxTimeVal, 
+                        waLabel: labelWA,
+                        unsub: isUnsubAI, 
+                        device: String(row[3] || "Default").trim(), 
+                        biodata: String(row[9] || ""), 
+                        lastMsg: lastLines.length > 1 ? lastLines.slice(1).join(' ').trim() : lastMsgRaw,
+                        isUnread: isUnread,
+                        nextSendFu: nextSendFuVal
+                    });
+                }
+            });
+            contactsArray = Array.from(contactMap.values());
+        }
+        
+        const taskCountMap = (typeof _getActiveTaskCountMap === 'function') ? _getActiveTaskCountMap() : {};
+        
+        const contacts = contactsArray.filter(c => {
+            const matchSearch = c.name.toLowerCase().includes(searchTerm) || c.id.toLowerCase().includes(searchTerm);
+            const matchDevice = selectedDevice === "Semua" || c.device === selectedDevice;
+            const labelArray = c.waLabel.split(',').map(l => l.trim());
+            const matchLabel = selectedLabel === "Semua" || labelArray.includes(selectedLabel);
+            
+            // Clean WA untuk fallback pencocokan ID
+            const cleanWaC = c.id.includes('@g.us') ? c.id.split('@g.us')[0] : c.id.split('.')[0].replace(/\D/g, '');
+            const cTaskCount = (taskCountMap[c.id] !== undefined ? taskCountMap[c.id] : (taskCountMap[cleanWaC] || 0));
+
+            // BLOK KODE BARU: Evaluasi kondisi filter Next Send FU & Task Active
+            const matchNextSendFu = !filterNextSendFuOnly || isNextSendFuDue(c.nextSendFu);
+            const matchTaskActive = !filterTaskActiveOnly || (cTaskCount > 0);
+            
+            return matchSearch && matchDevice && matchLabel && 
+                   (!filterUnsubOnly || c.unsub) && 
+                   (!filterBelumBalasOnly || !c.isMe) && 
+                   (!filterUnreadOnly || c.isUnread) &&
+                   matchNextSendFu &&
+                   matchTaskActive;
+        });
+        
+        // ==============================================================
+        // BLOK KODE BARU: SMART SORTING UNTUK NEXT SEND FU
+        // ==============================================================
+        contacts.sort((a, b) => {
+            // Jika filter Next Send FU menyala, ubah mode pengurutan
+            if (filterNextSendFuOnly) {
+                // Helper untuk membedah angka waktu (timestamp) dari string tanggal FU
+                const parseFuTime = (str) => {
+                    if (!str || str.trim() === "" || str.trim() === "-") return 0;
+                    let d = new Date(str);
+                    return isNaN(d.getTime()) ? 0 : d.getTime();
+                };
+
+                const fuA = parseFuTime(a.nextSendFu);
+                const fuB = parseFuTime(b.nextSendFu);
+
+                // Aturan 1: Jika A punya tanggal FU dan B kosong, A taruh di atas
+                if (fuA > 0 && fuB === 0) return -1;
+                
+                // Aturan 2: Jika B punya tanggal FU dan A kosong, B taruh di atas
+                if (fuB > 0 && fuA === 0) return 1;
+                
+                // Aturan 3: Jika keduanya punya tanggal FU, urutkan dari Tanggal Terbaru ke Terlama (A-Z)
+                if (fuA > 0 && fuB > 0) {
+                    return fuB - fuA; 
+                }
+            }
+            
+            // Aturan Default: Jika filter mati (atau keduanya sama-sama tidak punya tanggal FU), 
+            // urutkan berdasarkan waktu chat masuk/keluar terakhir
+            return b.timeVal - a.timeVal;
+        });
+        // ==============================================================
+        
+        contactList.innerHTML = "";
+        if (contacts.length === 0) {
+            contactList.innerHTML = '<div class="p-8 text-center text-gray-400 text-xs italic">Tidak ada kontak.</div>';
+            return;
+        }
+
+        const totalContactsCount = contacts.length;
+        const displayContacts = contacts.slice(0, contactRenderLimit);
+        
+        displayContacts.forEach(c => {
+            let bgClass = currentContactId === c.id ? 'bg-gray-100' : '';
+            if (!bgClass) {
+                bgClass = c.unsub ? 'bg-red-50/40' : (c.isUnread ? 'bg-blue-50/30' : '');
+            }
+            // Jika mode duplikat sedang nyala, tandai semua kartu dengan warna peringatan tipis
+            if (!bgClass && showDuplicateNetOnly) bgClass = 'bg-orange-50/30';
+
+            const cleanWaC = c.id.includes('@g.us') ? c.id.split('@g.us')[0] : c.id.split('.')[0].replace(/\D/g, '');
+            const cTaskCount = (taskCountMap[c.id] !== undefined ? taskCountMap[c.id] : (taskCountMap[cleanWaC] || 0));
+            
+            const div = document.createElement('div');
+            div.className = `contact-item p-3 flex gap-3 items-center ${bgClass}`;
+            div.onclick = () => selectContact(c);
+            
+            let labelsHtml = '';
+            if (c.waLabel) {
+                const labels = c.waLabel.split(',').map(l => l.trim()).filter(l => l !== "");
+                labelsHtml = labels.map(l => {
+                    if (l.replace(/\s+/g, '').toUpperCase() === 'UNSUBAI') return '';
+                    return `<span class="badge-wa">${l}</span>`;
+                }).join(' ');
+            }
+
+            const unreadMarker = c.isUnread ? `<span class="w-2.5 h-2.5 bg-blue-500 rounded-full inline-block shadow-sm"></span>` : '';
+            const nameWeight = c.isUnread ? 'font-black text-black' : 'font-bold text-gray-800';
+            const msgWeight = c.isUnread ? 'font-bold text-gray-800' : 'text-gray-500';
+            const timeColor = c.isUnread ? 'text-blue-500 font-bold' : 'text-gray-400';
+
+            // ==============================================================
+            // BLOK KODE BARU: FORMATTER TAMPILAN NEXT SEND FU
+            // ==============================================================
+            let fuHtml = '';
+            if (c.nextSendFu && c.nextSendFu.trim() !== "" && c.nextSendFu.trim() !== "-") {
+                let targetDate = new Date(c.nextSendFu);
+                if (!isNaN(targetDate.getTime())) {
+                    let today = new Date();
+                    today.setHours(0,0,0,0);
+                    let checkDate = new Date(targetDate);
+                    checkDate.setHours(0,0,0,0);
+                    
+                    let isDue = checkDate <= today;
+                    let monthNames = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Ags','Sep','Okt','Nov','Des'];
+                    let displayStr = targetDate.getDate() + ' ' + monthNames[targetDate.getMonth()];
+                    
+                    if (isDue) {
+                        // Tampilan jika sudah waktunya FU (Orange/Merah)
+                        fuHtml = `<span class="text-[8px] bg-orange-100 text-orange-700 border border-orange-200 px-1.5 py-0.5 rounded font-black flex items-center gap-0.5 shadow-sm" title="Sudah Masuk Waktu Follow Up">🔔 FU: ${displayStr}</span>`;
+                    } else {
+                        // Tampilan jika jadwal FU masih di masa depan (Hijau/Teal)
+                        fuHtml = `<span class="text-[8px] bg-emerald-50 text-emerald-600 border border-emerald-200 px-1.5 py-0.5 rounded font-bold flex items-center gap-0.5 shadow-sm" title="Jadwal Follow Up Mendatang">🗓️ FU: ${displayStr}</span>`;
+                    }
+                }
+            }
+            // ==============================================================
+
+            // --- BLOK KODE BARU: AVATAR DINAMIS (FU) ---
+            let avatarHtml = '';
+            
+            // Jika toggle filter Next Send FU diaktifkan
+            if (filterNextSendFuOnly) {
+                // 1. Ekstrak & bersihkan nomor WA secara responsif
+                let waCleanSidebar = c.id;
+                if (waCleanSidebar.includes('@g.us')) {
+                    waCleanSidebar = waCleanSidebar.split('@g.us')[0];
+                } else {
+                    waCleanSidebar = waCleanSidebar.split('.')[0].replace(/\D/g, '');
+                }
+                
+                // 2. Render Link Tombol WA dengan event.stopPropagation() agar tidak bentrok
+                avatarHtml = `
+                    <button onclick="event.stopPropagation(); handleFollowUpClick('${c.id}', '${waCleanSidebar}')" class="w-12 h-12 rounded-full flex-shrink-0 flex items-center justify-center shadow-md bg-green-100 text-[#25D366] border border-green-200 hover:bg-[#25D366] hover:text-white transition-all group" title="Follow Up & Update Jadwal">
+                        <svg width="24" height="24" fill="currentColor" viewBox="0 0 16 16" class="transform group-hover:scale-110 transition-transform">
+                            <path d="M13.601 2.326A7.854 7.854 0 0 0 7.994 0C3.627 0 .068 3.558.064 7.926c0 1.399.366 2.76 1.057 3.965L0 16l4.204-1.102a7.933 7.933 0 0 0 3.79.965h.004c4.368 0 7.926-3.558 7.93-7.93A7.898 7.898 0 0 0 13.6 2.326zM7.994 14.521a6.573 6.573 0 0 1-3.356-.92l-.24-.144-2.494.654.666-2.433-.156-.251a6.56 6.56 0 0 1-1.007-3.505c0-3.626 2.957-6.584 6.591-6.584a6.56 6.56 0 0 1 4.66 1.931 6.557 6.557 0 0 1 1.928 4.66c-.004 3.639-2.961 6.592-6.592 6.592zm3.615-4.934c-.197-.099-1.17-.578-1.353-.646-.182-.065-.315-.099-.445.099-.133.197-.513.646-.627.775-.114.133-.232.148-.43.05-.197-.1-.836-.308-1.592-.985-.59-.525-.985-1.175-1.103-1.372-.114-.198-.011-.304.088-.403.087-.088.197-.232.296-.346.1-.114.133-.198.198-.33.065-.134.034-.248-.015-.347-.05-.099-.445-1.076-.612-1.47-.16-.389-.323-.335-.445-.34-.114-.007-.247-.007-.38-.007a.729.729 0 0 0-.529.247c-.182.198-.691.677-.691 1.654 0 .977.71 1.916.81 2.049.098.133 1.394 2.132 3.383 2.992.47.205.84.326 1.129.418.475.152.904.129 1.246.08.38-.058 1.171-.48 1.338-.943.164-.464.164-.86.114-.943-.049-.084-.182-.133-.38-.232z"/>
+                        </svg>
+                    </button>
+                `;
+            } else {
+                // 3. Render Avatar Inisial Bulat Default (Jika filter mati)
+                avatarHtml = `
+                    <div class="w-12 h-12 rounded-full flex-shrink-0 flex items-center justify-center font-bold shadow-sm ${getAvatarColorClass(c.isMe, c.waLabel)}">
+                        ${c.name.charAt(0).toUpperCase()}
+                    </div>
+                `;
+            }
+
+            div.innerHTML = `
+                ${avatarHtml}
+                <div class="flex-1 min-w-0 border-b border-gray-50 pb-2 h-full">
+                    <div class="flex justify-between items-center">
+                        <h3 class="text-sm truncate ${nameWeight}">${c.name}</h3>
+                        <div class="flex items-center gap-1.5">
+                            ${unreadMarker}
+                            <span class="text-[10px] ${timeColor}">${c.time ? (c.time.length > 16 ? c.time.substring(0, 16) : c.time) : ''}</span>
+                        </div>
+                    </div>
+                    <p class="text-[11px] truncate mt-0.5 ${c.isPending ? 'text-red-500 font-bold' : msgWeight}">${c.lastMsg}</p>
+                    <div class="flex gap-1 mt-1 flex-wrap items-center">
+                        <span class="text-[8px] bg-gray-100 px-1.5 py-0.5 rounded border border-gray-200 text-gray-500 font-bold uppercase shadow-sm">${c.device}</span>
+                        ${cTaskCount > 0 ? `<span class="text-[8px] bg-indigo-50 text-indigo-700 border border-indigo-200 px-1.5 py-0.5 rounded font-bold shadow-sm" title="${cTaskCount} Task Aktif">📋 ${cTaskCount} Task</span>` : ''}
+                        ${fuHtml} 
+                        ${labelsHtml}
+                        ${c.unsub ? '<span class="badge-unsub-ai">UNSUB AI</span>' : ''}
+                        ${c.isPending ? '<span class="text-[8px] bg-red-100 text-red-600 px-1 rounded font-bold">PENDING</span>' : ''}
+                    </div>
+                </div>
+            `;
+            contactList.appendChild(div);
+        });
+
+        if (totalContactsCount > contactRenderLimit) {
+            const moreBtn = document.createElement('div');
+            moreBtn.className = 'p-3 text-center border-t border-gray-100 no-print';
+            moreBtn.innerHTML = `<button type="button" onclick="contactRenderLimit += 40; renderSidebar();" class="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-bold py-2 rounded-xl transition-colors cursor-pointer shadow-sm">⚡ Tampilkan 40 Kontak Lagi (${contactRenderLimit} dari ${totalContactsCount})</button>`;
+            contactList.appendChild(moreBtn);
+        }
+    }
+    
+    function getFilterVal(id, className, defaultVal = "") {
+        const el = document.getElementById(id) || document.querySelector('.' + className);
+        return el ? el.value : defaultVal;
+    }
+    function getFilterChecked(id, className, defaultVal = false) {
+        const el = document.getElementById(id) || document.querySelector('.' + className);
+        return el ? el.checked : defaultVal;
+    }
+
+    function handleDeviceChange() { selectedDevice = getFilterVal('device-select', 'device-select-elem', "Semua"); updateLabelFilter(); renderSidebar(); }
+    function handleLabelChange() { selectedLabel = getFilterVal('label-select', 'label-select-elem', "Semua"); renderSidebar(); }
+    function handleUnsubFilterChange() { filterUnsubOnly = getFilterChecked('unsub-filter', 'unsub-filter-elem', false); updateDeviceFilter(); updateLabelFilter(); renderSidebar(); }
+    function handleBelumBalasFilterChange() { filterBelumBalasOnly = getFilterChecked('belum-balas-filter', 'belum-balas-filter-elem', false); updateDeviceFilter(); updateLabelFilter(); renderSidebar(); }
+    function handleUnreadFilterChange() { 
+        filterUnreadOnly = getFilterChecked('unread-filter', 'unread-filter-elem', false); 
+        updateDeviceFilter(); 
+        updateLabelFilter(); 
+        renderSidebar(); 
+    }
+
+    function handleNextSendFuFilterChange() {
+        filterNextSendFuOnly = getFilterChecked('next-send-fu-filter', 'next-send-fu-filter-elem', false);
+        updateDeviceFilter();
+        updateLabelFilter();
+        renderSidebar();
+    }
+
+    function handleTaskActiveFilterChange() {
+        filterTaskActiveOnly = getFilterChecked('task-active-filter', 'task-active-filter-elem', false);
+        
+        // Pancing penarikan data ticket secara silent jika belum ada saat filter dinyalakan
+        if (filterTaskActiveOnly && (typeof ticketDataCache === 'undefined' || !ticketDataCache || ticketDataCache.length <= 1) && !window.isFetchingTicketDataSilent) {
+            window.isFetchingTicketDataSilent = true;
+            google.script.run
+                .withSuccessHandler(function(res) {
+                    window.isFetchingTicketDataSilent = false;
+                    if (res && res.status === "success") {
+                        ticketDataCache = res.ticket || [];
+                        areaDataCache = res.area || [];
+                        updateDeviceFilter();
+                        updateLabelFilter();
+                        renderSidebar();
+                    }
+                })
+                .withFailureHandler(function() {
+                    window.isFetchingTicketDataSilent = false;
+                })
+                .getAreaTicketDataNative(SHEET_URL, (userAllowedAccounts || []).join(','));
+        }
+
+        updateDeviceFilter();
+        updateLabelFilter();
+        renderSidebar();
+    }
+    
+    function updateChatFilterBadges() {
+        const isActive = (typeof selectedDevice !== 'undefined' && selectedDevice !== "Semua") ||
+                         (typeof selectedLabel !== 'undefined' && selectedLabel !== "Semua") ||
+                         (typeof filterUnsubOnly !== 'undefined' && filterUnsubOnly) ||
+                         (typeof filterBelumBalasOnly !== 'undefined' && filterBelumBalasOnly) ||
+                         (typeof filterUnreadOnly !== 'undefined' && filterUnreadOnly) ||
+                         (typeof filterNextSendFuOnly !== 'undefined' && filterNextSendFuOnly) ||
+                         (typeof filterTaskActiveOnly !== 'undefined' && filterTaskActiveOnly);
+
+        const bDesk = document.getElementById('chat-filter-badge-desktop');
+        const bMob = document.getElementById('chat-filter-badge-mobile');
+        if (bDesk) bDesk.classList.toggle('hidden', !isActive);
+        if (bMob) bMob.classList.toggle('hidden', !isActive);
+    }
+
+    // FUNGSI RESET FILTER OBROLAN (DESKTOP & MOBILE)
+    function resetChatFilters() {
+        selectedDevice = "Semua";
+        selectedLabel = "Semua";
+        filterUnsubOnly = false;
+        filterBelumBalasOnly = false;
+        filterUnreadOnly = false;
+        filterNextSendFuOnly = false;
+        filterTaskActiveOnly = false;
+
+        document.querySelectorAll('.device-select-elem').forEach(el => el.value = "Semua");
+        document.querySelectorAll('.label-select-elem').forEach(el => el.value = "Semua");
+
+        document.querySelectorAll('.belum-balas-filter-elem').forEach(el => el.checked = false);
+        document.querySelectorAll('.unsub-filter-elem').forEach(el => el.checked = false);
+        document.querySelectorAll('.next-send-fu-filter-elem').forEach(el => el.checked = false);
+        document.querySelectorAll('.task-active-filter-elem').forEach(el => el.checked = false);
+        document.querySelectorAll('.unread-filter-elem').forEach(el => el.checked = false);
+
+        updateDeviceFilter();
+        updateLabelFilter();
+        renderSidebar();
+
+        if (typeof showToast === 'function') {
+            showToast("Filter obrolan berhasil di-reset");
+        }
+    }
+    
+    // ==============================================================
+// BLOK KODE BARU: EVENT HANDLER KLIK FOLLOW UP (FU)
+// ==============================================================
+function handleFollowUpClick(contactId, waNumber) {
+    // 1. Buka WA web/app di tab/jendela baru
+    window.open(`https://wa.me/${waNumber}`, '_blank');
+    
+    // 2. Berikan notifikasi awal
+    showToast("Memperbarui jadwal Follow Up...");
+    
+    // 3. Tembak ke Backend GAS untuk update spreadsheet
+    google.script.run
+        .withSuccessHandler(function(res) {
+            if (res && res.status === "success") {
+                // 4. Update data cache UI secara instan agar sinkron
+                // Mengupdate array allData (Ingat: Index Array dimulai dari 0)
+                const rowIndex = allData.findIndex(r => r[1] === contactId);
+                if (rowIndex > -1) {
+                    allData[rowIndex][13] = true; // Kolom N (Index 13): Set isMe ke True
+                    allData[rowIndex][16] = res.waktuSekarangStr; // Kolom Q (Index 16): Waktu Keluar Terakhir
+                    allData[rowIndex][24] = "Manual NextSendFU dari Omnichanel"; // Kolom Y (Index 24): Log AI
+                    allData[rowIndex][28] = res.newDateStr; // Kolom AC (Index 28): Next Send FU
+                }
+                
+                showToast("✅ Jadwal FU diperbarui: " + res.newDateStr);
+                
+                // 5. Render ulang sidebar agar kartu ter-refresh
+                renderSidebar(); 
+            } else {
+                showToast("❌ Gagal memperbarui jadwal FU.");
+            }
+        })
+        .withFailureHandler(function(err) {
+            showToast("❌ Server Error saat update jadwal FU.");
+        })
+        .updateNextSendFuAutomatedNative(SHEET_URL, contactId);
+}
+
+    function isImageUrl(url) {
+        if (url.includes('oneapi.my.id/download/v')) return true;
+        // TAMBAHKAN BARIS INI: Jika link mengandung "drive.google.com/file/d/", anggap itu gambar
+        if (url.includes('drive.google.com/file/d/')) return true;
+        if (url.includes('drive.google.com/uc?')) return true;
+        const imageExtensions = /\.(jpg|jpeg|png|gif|webp|bmp|svg)(\?.*)?$/i;
+        return imageExtensions.test(url);
+    }
+
+    // MODIFIKASI: Konversi Link Drive menggunakan jalur CDN Google Usercontent (Mendukung CORS)
+function getEmbeddableImageUrl(url) {
+        if (!url) return "";
+        // TAMBAHAN BARU: Regex ini sekarang bisa menangkap ID dari format /file/d/ MAUPUN /uc?id=
+        const gDriveRegex = /drive\.google\.com\/(?:file\/d\/|uc\?.*?id=)([a-zA-Z0-9_-]+)/;
+        const match = url.match(gDriveRegex);
+        
+        if (match) {
+            // Mengubahnya menjadi link CDN Googleusercontent agar mendukung CORS & html2canvas
+            return `https://lh3.googleusercontent.com/d/${match[1]}`;
+        }
+        return url;
+    }
+
+  // blok kode baru
+    function formatMessageContent(text) {
+        if (!text) return "";
+        
+        // 1. Ekstrak Gambar (jika ada) dan bersihkan dari teks utama
+        let imageUrl = null;
+        let processedText = text.replace(/\[Gambar Disimpan\s*:\s*(https?:\/\/[^\s\]]+)\]/gi, function(match, p1) {
+            imageUrl = p1;
+            return "";
+        });
+
+        // 2. Ekstrak Data Finance (jika ada)
+        let financeCardHtml = "";
+        const financeRegex = /\[User Kirim Gambar\s*:\s*(.*?)\]/gi;
+        processedText = processedText.replace(financeRegex, function(match, dataString) {
+            let parts = dataString.split(';;');
+            if (parts.length >= 8) {
+                let jenis = parts[0] ? parts[0].trim() : "-";
+                let kategori = parts[1] ? parts[1].trim() : "-";
+                let tgl = parts[2] ? parts[2].trim() : "-";
+                let item = parts[3] ? parts[3].trim() : "-";
+                let qty = parts[4] ? parts[4].trim() : "0";
+                let satuan = parts[5] ? parts[5].trim() : "-";
+                let hargaVal = parts[6] ? (parseInt(parts[6].replace(/\D/g,''))||0) : 0;
+                let totalVal = parts[7] ? (parseInt(parts[7].replace(/\D/g,''))||0) : 0;
+                let noRef = parts[8] ? parts[8].trim() : "-";
+
+                // Jika NonTransaksi atau Total 0 -> Render Caption Sederhana
+                if (totalVal === 0 || jenis.toLowerCase().includes('nontransaksi')) {
+                    financeCardHtml = `
+                    <div class="p-2.5 bg-gray-50/90 text-[11px] text-gray-700 italic border-t border-gray-100">
+                        <span class="font-bold block not-italic text-gray-400 text-[9px] uppercase tracking-wider mb-0.5">Keterangan Gambar</span>
+                        ${item}
+                    </div>`.replace(/\n\s+/g, ' ');
+                } else {
+                    // Jika Transaksi Valid -> Render Struk Bersih Langsung Menempel
+                    financeCardHtml = `
+                    <div class="p-3 bg-emerald-50/30 border-t border-emerald-100/60 text-[11px] text-gray-700">
+                        <div class="font-bold text-[#008069] mb-1.5 flex items-center justify-between border-b border-emerald-100/80 pb-1">
+                            <span class="flex items-center gap-1 uppercase tracking-wider text-[10px]">
+                                <svg width="11" height="11" fill="currentColor" viewBox="0 0 16 16"><path d="M1.5 1a.5.5 0 0 0-.5.5v3a.5.5 0 0 1-1 0v-3A1.5 1.5 0 0 1 1.5 0h3a.5.5 0 0 1 0 1h-3zM11 .5a.5.5 0 0 1 .5-.5h3A1.5 1.5 0 0 1 16 1.5v3a.5.5 0 0 1-1 0v-3a.5.5 0 0 0-.5-.5h-3a.5.5 0 0 1-.5-.5zM.5 11a.5.5 0 0 1 .5.5v3a.5.5 0 0 0 .5.5h3a.5.5 0 0 1 0 1h-3A1.5 1.5 0 0 1 0 14.5v-3a.5.5 0 0 1 .5-.5zm15 0a.5.5 0 0 1 .5.5v3a1.5 1.5 0 0 1-1.5 1.5h-3a.5.5 0 0 1 0-1h3a.5.5 0 0 0 .5-.5v-3a.5.5 0 0 1 .5-.5zM3 4.5a.5.5 0 0 1 .5-.5h8a.5.5 0 0 1 .5.5v7a.5.5 0 0 1-.5.5h-8a.5.5 0 0 1-.5-.5v-7z"/></svg> 
+                                Rekap Transaksi
+                            </span>
+                            <span class="font-mono text-[9px] text-gray-500 bg-white px-1.5 py-0.5 rounded border border-gray-200" title="Ref ID: ${noRef}">ID: ${noRef}</span>
+                        </div>
+                        <div class="flex justify-between text-[10.5px] mb-0.5">
+                            <span class="text-gray-400">Kategori</span>
+                            <span class="font-semibold text-gray-800">${jenis} • ${kategori}</span>
+                        </div>
+                        <div class="flex justify-between text-[10.5px] mb-1.5">
+                            <span class="text-gray-400">Tanggal</span>
+                            <span class="font-semibold text-gray-800">${tgl}</span>
+                        </div>
+                        <div class="mt-1 pt-1.5 border-t border-dashed border-emerald-200/60">
+                            <div class="font-medium text-gray-800 leading-snug mb-1">${item}</div>
+                            <div class="flex justify-between items-end mt-1">
+                                <span class="text-[9.5px] text-gray-500 font-mono">${qty} ${satuan} x Rp ${hargaVal.toLocaleString('id-ID')}</span>
+                                <span class="font-black text-[#008069] text-[13px]">Rp ${totalVal.toLocaleString('id-ID')}</span>
+                            </div>
+                        </div>
+                    </div>`.replace(/\n\s+/g, ' ');
+                }
+            }
+            return ""; // Hapus tag dari pesan murni
+        });
+
+        // 3. Bangun Komponen Gambar & Struk Menjadi Satu Kotak Utuh (Unified Card)
+        let mediaBlock = "";
+        if (imageUrl) {
+            const imgSrc = getEmbeddableImageUrl(imageUrl);
+            mediaBlock = `
+                <div class="rounded-xl overflow-hidden border border-gray-200 bg-white shadow-sm mt-1 mb-1 max-w-[320px]">
+                    <div class="bg-gray-100 overflow-hidden cursor-zoom-in">
+                        <img src="${imgSrc}" class="w-full max-h-[260px] object-cover block transition-transform hover:scale-102"
+                             onerror="this.style.display='none'; this.parentElement.style.display='none';" 
+                             onclick="openImageModal('${imgSrc}')"
+                             alt="Bukti Transfer" loading="lazy">
+                    </div>
+                    ${financeCardHtml}
+                </div>
+            `;
+        } else if (financeCardHtml) {
+            // Jika ada struk tapi tanpa URL gambar
+            mediaBlock = `
+                <div class="rounded-xl overflow-hidden border border-gray-200 bg-white shadow-sm mt-1 mb-1 max-w-[320px]">
+                    ${financeCardHtml}
+                </div>
+            `;
+        }
+
+        // 4. Proses URL Tautan Standar Lainnya (Teks biasa)
+        const urlRegex = /(https?:\/\/[^\s]+)/g;
+        processedText = processedText.trim().replace(urlRegex, function(url) {
+            if (isImageUrl(url) && !imageUrl) {
+                const imgSrc = getEmbeddableImageUrl(url);
+                return `
+                    <div class="chat-image-container my-1">
+                        <img src="${imgSrc}" class="chat-image" 
+                             onerror="this.style.display='none'; this.parentElement.style.display='none';" 
+                             onclick="openImageModal('${imgSrc}')"
+                             alt="Gambar" loading="lazy">
+                    </div>
+                `;
+            }
+            return `<a href="${url}" target="_blank" class="chat-link">${url}</a>`;
+        });
+
+        return mediaBlock + (processedText ? `<div class="mt-1">${processedText}</div>` : "");
+    }
+
+    
+ // Tambahkan variabel global ini di bagian atas script bersama variabel let lainnya
+let searchTimeout = null;
+
+// Ganti fungsi handleSearch dengan versi Debounce
+function handleSearch() { 
+    // Clear timeout sebelumnya jika user masih mengetik cepat
+    if (searchTimeout) clearTimeout(searchTimeout);
+    
+    // Tunda eksekusi render selama 300ms (Debounce)
+    searchTimeout = setTimeout(() => {
+        contactRenderLimit = 40;
+        searchTerm = document.getElementById('search-input').value.toLowerCase(); 
+        
+        if (searchTerm === "") {
+            const searchSpinner = document.getElementById('search-spinner');
+            if (searchSpinner) searchSpinner.classList.add('hidden');
+        }
+        
+        renderSidebar(); 
+    }, 300); // 300 milidetik adalah jeda ideal untuk pengetikan manusia
+}
+
+    // --- BLOK KODE BARU: HELPER RENDER BADGE & RFM ---
+    function renderBadgesHtml(waLabel, isUnsub, isHeader = false) {
+        let html = '';
+        if (waLabel) {
+            const labels = waLabel.split(',').map(l => l.trim()).filter(l => l !== "");
+            html = labels.map(l => {
+                let text = l.toUpperCase();
+                if (text === 'UNSUBAI') return '';
+                if (text.startsWith('CRM_')) {
+                    let clean = text.replace('CRM_', '').replace(/_/g, ' ');
+                    let styleCrm = isHeader ? "bg-yellow-400 text-yellow-900 px-2 py-0.5 rounded text-[9px] font-extrabold shadow-sm" : "bg-purple-100 text-purple-700 border border-purple-200 px-2 py-0.5 rounded text-[9px] font-extrabold shadow-sm";
+                    return `<span class="${styleCrm}">👑 ${clean}</span>`;
+                }
+                let styleDef = isHeader ? "badge-wa !bg-gray-200 !text-gray-800 border-none" : "badge-wa";
+                return `<span class="${styleDef}">${l}</span>`;
+            }).join(' ');
+        }
+        if (isUnsub) html += ` <span class="badge-unsub-ai !bg-red-500 !text-white border-white/40">UNSUB AI</span>`;
+        return html;
+    }
+
+// --- BLOK KODE BARU: HELPER RFM COMPACT, COPY ID, & CATATAN ---
+    let currentCustomerNotesHtml = ""; // Variabel global penyimpan catatan sementara
+
+    function copyContactId() {
+        if (!currentContactId) return;
+        // Prioritaskan Nomor WA dari Kolom F (index 5), fallback ke angka dari ID Networking
+        const rowData = (typeof allData !== 'undefined' && Array.isArray(allData)) ? allData.find(r => r[1] === currentContactId) : null;
+        const rawWaColF = (rowData && rowData[5]) ? String(rowData[5]).split('@')[0].split('.')[0].replace(/\D/g, '') : "";
+        let cleanWa = rawWaColF || currentContactId.split('.')[0].replace(/\D/g, '');
+        const btn = document.getElementById('btn-copy-id');
+        copyToClipboard(cleanWa, btn, "✅ Nomor WA disalin: " + cleanWa);
+    }
+
+    function showCustomerNotes() {
+        if(currentCustomerNotesHtml !== "") {
+            showTooltip("📝 Catatan Customer", currentCustomerNotesHtml);
+        }
+    }
+
+function formatRfmTextCompact(rfmLine) {
+        let match = rfmLine.match(/\[RFM (.*?)\] (.*)/i);
+        if(match) {
+            let vals = match[2].split(',');
+            if(vals.length >= 3) {
+                let r = vals[0].trim(), f = vals[1].trim(), m = parseInt(vals[2].trim()) || 0;
+                // Format M lebih ringkas
+                let mStr = m >= 1000000 ? (m/1000000).toFixed(1).replace('.0','') + 'Jt' : (m >= 1000 ? (m/1000).toFixed(0) + 'Rb' : m);
+                
+                // Desain Badge Compact dengan pembatas yang rapi
+                return `<span class="bg-[#0055ff] text-white px-1.5 py-0.5 rounded font-bold tracking-wider shadow-inner border border-white/10" title="Data diperbarui: ${match[1]}">🎯 R:${r} | F:${f} | M:${mStr}</span>`;
+            }
+        }
+        return ""; 
+    }
+
+    function selectContact(contact) {
+        currentContactId = contact.id;
+        
+        // 1. Cek Label Validitas
+        const labelsArray = (contact.waLabel || "").toUpperCase().split(',').map(l => l.trim());
+        const isAllowedToReply = labelsArray.includes('ABC') || 
+                             labelsArray.includes('AE') || 
+                             labelsArray.includes('AER') || 
+                             labelsArray.includes('GROUP') || 
+                             labelsArray.includes('AGEN');
+                             
+        // 2. Ambil Elemen UI (Tambahkan elemen Device OFF)
+        const inputContainer = document.getElementById('input-container');
+        const error463Inline = document.getElementById('error-463-msg') || document.getElementById('modal-error-463'); 
+        const apiWarning = document.getElementById('api-warning-msg');
+        const deviceOffWarning = document.getElementById('device-off-msg'); // ELEMEN BARU
+
+        // 3. Pengecekan Ketersediaan API & Status Device dari Memori Lokal
+        const rowData = allData.find(r => r[1] === currentContactId);
+        const apiKeyValid = rowData && String(rowData[31] || "").trim() !== "";
+        const apiUrlValid = rowData && String(rowData[32] || "").trim() !== "";
+        
+        // Pengecekan Status Device dari Kolom C (Indeks 2) di deviceCache
+        const devSetting = deviceCache.find(d => d.providerId === contact.device || String(d.fullRow[0] || "").trim() === contact.device);
+        const isDeviceOff = devSetting && String(devSetting.fullRow[2] || "").trim().toUpperCase() === "DEVICE OFF";
+
+        // --- BLOK KODE BARU: LOGIKA PINNED MESSAGE (Kolom D / Index 3) & TASK BAR ---
+        currentActiveDeviceSetting = devSetting; // Simpan ke global untuk Tooltip
+        const pinTaskBar = document.getElementById('chat-pin-task-bar');
+        const pinnedContainer = document.getElementById('pinned-msg-container');
+        const pinnedTextEl = document.getElementById('pinned-msg-text');
+        if (pinTaskBar) pinTaskBar.classList.remove('hidden');
+        
+        // Menarik data catatan dari Kolom D (Indeks 3)
+        const catatanDevice = devSetting && devSetting.fullRow ? String(devSetting.fullRow[3] || "").trim() : "";
+
+        if (catatanDevice !== "" && catatanDevice !== "-") {
+            pinnedTextEl.innerText = catatanDevice;
+            pinnedContainer.classList.remove('hidden');
+        } else {
+            pinnedContainer.classList.add('hidden');
+        }
+        // ------------------------------------------------------------------
+
+        // 4. Reset Semua Area Bawah (Disembunyikan)
+        inputContainer.classList.add('hidden');
+        if (error463Inline) error463Inline.classList.add('hidden');
+        if (apiWarning) apiWarning.classList.add('hidden');
+        if (deviceOffWarning) deviceOffWarning.classList.add('hidden');
+
+        // 5. Hierarki Tampilan Baru (Device OFF Urutan 1)
+        if (isDeviceOff) {
+            // Kondisi 1: Device sengaja dimatikan dari Setting (Kolom C)
+            if (deviceOffWarning) deviceOffWarning.classList.remove('hidden');
+        } else if (!apiKeyValid || !apiUrlValid) {
+            // Kondisi 2: API Kosong
+            if (apiWarning) apiWarning.classList.remove('hidden');
+        } else if (!isAllowedToReply) {
+            // Kondisi 3: Kena Limit Anti-Spam WhatsApp
+            if (error463Inline) error463Inline.classList.remove('hidden'); 
+        } else {
+            // Kondisi 4: Aman, Tampilkan Kotak Ketik
+            inputContainer.classList.remove('hidden');
+        }
+        // =====================================================================
+
+        // --- Eksekusi lanjutan data visual (Nama, Badges, dll) ---
+        document.getElementById('chat-name').innerText = contact.name;
+        const rawWaColF = (rowData && rowData[5]) ? String(rowData[5]).split('@')[0].split('.')[0].replace(/\D/g, '') : "";
+        const displayWa = rawWaColF || String(contact.id || "").split('.')[0].replace(/\D/g, '') || "-";
+        const chatIdEl = document.getElementById('chat-id');
+        chatIdEl.innerText = `WA: ${displayWa}`;
+        chatIdEl.title = `ID: ${contact.id}`;
+        document.getElementById('btn-copy-id').classList.remove('hidden');
+        
+        const av = document.getElementById('chat-avatar');
+        av.innerText = contact.name.charAt(0).toUpperCase();
+        av.className = `w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg border border-white/20 ${getAvatarColorClass(contact.isMe, contact.waLabel)}`;
+        
+        const badges = document.getElementById('chat-badges');
+        badges.innerHTML = renderBadgesHtml(contact.waLabel, contact.unsub, true);
+        
+        const rfmDisplay = document.getElementById('rfm-display');
+        const noteContainer = document.getElementById('note-container');
+        const notePreview = document.getElementById('note-preview');
+        
+        currentCustomerNotesHtml = ""; 
+        rfmDisplay.innerHTML = "";
+        if (notePreview) notePreview.innerHTML = "";
+        if (noteContainer) {
+            noteContainer.classList.remove('flex');
+            noteContainer.classList.add('hidden');
+        }
+        
+        if (contact.biodata) {
+            let lines = contact.biodata.split('\n').filter(l => l.trim() !== "");
+            let rfmLine = lines.find(l => l.includes('[RFM'));
+            let otherLines = lines.filter(l => !l.includes('[RFM'));
+            
+            if (rfmLine) rfmDisplay.innerHTML = formatRfmTextCompact(rfmLine);
+            if (otherLines.length > 0) {
+                let firstNote = otherLines[0].replace(/^~\s*/, '');
+                if (notePreview) notePreview.innerText = "• " + firstNote;
+                currentCustomerNotesHtml = `<ul class="list-disc pl-4 text-left space-y-1 text-sm text-gray-700 font-medium">${otherLines.map(l => `<li>${l.replace(/^~\s*/, '')}</li>`).join('')}</ul>`;
+                if (noteContainer) {
+                    noteContainer.classList.remove('hidden');
+                    noteContainer.classList.add('flex');
+                }
+            }
+        }
+        
+        if (contact.isUnread) {
+            const rowIndex = allData.findIndex(r => r[1] === contact.id);
+            if (rowIndex > -1) allData[rowIndex][25] = false; 
+            
+            google.script.run
+                .withSuccessHandler(function(res) {})
+                .markAsRead(SHEET_URL, contact.id);
+        }
+        
+        refreshChat(true); renderSidebar(); openChat(); // Beri param 'true' agar selalu auto-scroll saat pindah kontak
+        if (typeof updateCustomerTaskBadge === 'function') updateCustomerTaskBadge();
+    }
+
+// Helper pengecekan apakah tanggal Next Send FU sudah melewati hari ini (due/saatnya FU)
+function isNextSendFuDue(dateStr) {
+    // 1. MODIFIKASI: Jika data kosong, undefined, atau strip (-), ANGGAP MASUK WAKTU FU (return true)
+    if (!dateStr || String(dateStr).trim() === "" || String(dateStr).trim() === "-") {
+        return true; 
+    }
+    
+    let targetDate = new Date(dateStr);
+    
+    // 2. MODIFIKASI: Jika data ada isinya tapi formatnya bukan tanggal valid, ANGGAP MASUK WAKTU FU (return true)
+    if (isNaN(targetDate.getTime())) {
+        return true; 
+    }
+    
+    // 3. Pengecekan normal jika tanggal valid
+    let today = new Date();
+    today.setHours(0, 0, 0, 0);
+    targetDate.setHours(0, 0, 0, 0);
+    
+    // Kembalikan true jika tanggal target sudah kelewatan atau sama dengan hari ini
+    return targetDate <= today; 
+}
+
+    // blok kode baru
+function refreshChat(forceScroll = false) {
+    const chatWin = document.getElementById('chat-window');
+    const isScrolledToBottom = chatWin.scrollHeight - chatWin.scrollTop - chatWin.clientHeight < 100;
+    const content = document.getElementById('chat-content');
+    const rows = allData.filter(r => r[1] === currentContactId);
+    content.innerHTML = "";
+
+    const fragment = document.createDocumentFragment();
+    
+    rows.forEach(row => {
+        const history = (row[19] || "").split(/(?:^|\n)\_\n/).filter(m => m.trim());
+        history.forEach(m => {
+            const lines = m.split('\n');
+            if (lines.length < 1) return;
+            
+            const bodyText = lines.slice(1).join('\n').trim();
+            const type = bodyText.toLowerCase().includes('admin :') ? 'admin' : 'user';
+            
+            // Ubah menjadi let agar string bisa dimanipulasi Regex
+            let cleanBody = bodyText.replace(/(admin|user)\s*:\s*/i, "").trim();
+            
+            if (cleanBody === "") return;
+            const isPending = cleanBody.includes("[PENDING]");
+            
+            // --- AWAL FITUR QUOTE/TAG PESAN ---
+            let quotedHtml = '';
+            const quoteRegex = /\[Merupakan Komen Tag\/quoted user dari pesan sebelumnya\s*:\s*([\s\S]*?)\]/i;
+            const quoteMatch = cleanBody.match(quoteRegex);
+
+            if (quoteMatch) {
+                let quotedText = quoteMatch[1].trim();
+                cleanBody = cleanBody.replace(quoteMatch[0], "").trim();
+                if (cleanBody === "") cleanBody = " "; 
+                
+                let borderColor = type === 'admin' ? 'border-[#34b7f1]' : 'border-[#128c7e]';
+                let titleColor = type === 'admin' ? 'text-[#34b7f1]' : 'text-[#128c7e]';
+
+                quotedHtml = `
+                    <div class="bg-black/5 border-l-4 ${borderColor} p-1.5 mb-1.5 mt-1 rounded-r text-[11px] text-gray-700 shadow-sm cursor-pointer hover:bg-black/10 transition-colors">
+                        <span class="font-extrabold ${titleColor} block mb-0.5">Membalas pesan:</span>
+                        <div class="line-clamp-3 italic opacity-90 break-words">${quotedText}</div>
+                    </div>
+                `;
+            }
+            // --- AKHIR FITUR QUOTE/TAG PESAN ---
+
+            const bubble = document.createElement('div');
+            bubble.className = `message-bubble ${type === 'admin' ? 'bubble-admin' : 'bubble-user'} ${isPending ? 'border-2 border-red-500 animate-pulse' : ''}`;
+            
+            const textToCopy = escapeHtmlAttr(cleanBody.replace(/\[Gambar Disimpan\s*:\s*(https?:\/\/[^\s\]]+)\]/gi, '$1'));
+            
+            let imageLinkHtml = '';
+            const savedImgMatch = cleanBody.match(/\[Gambar Disimpan\s*:\s*(https?:\/\/[^\s\]]+)\]/i);
+            
+            if (savedImgMatch) {
+                imageLinkHtml = `<a href="${savedImgMatch[1]}" target="_blank" class="header-link-btn" title="Buka Link Asli Gambar"><svg width="15" height="15" fill="currentColor" viewBox="0 0 16 16"><path d="M4.715 6.542 3.343 7.914a3 3 0 1 0 4.243 4.243l1.828-1.829A3 3 0 0 0 8.586 5.5L8 6.086a1.002 1.002 0 0 0-.154.199 2 2 0 0 1 .861 3.337L6.88 11.45a2 2 0 1 1-2.83-2.83l.793-.792a4.018 4.018 0 0 1-.128-1.287z"/><path d="M6.586 4.672A3 3 0 0 0 7.414 9.5l.775-.776a2 2 0 0 1-.896-3.346L9.12 3.55a2 2 0 1 1 2.83 2.83l-.793.792c.112.42.155.855.128 1.287l1.372-1.372a3 3 0 1 0-4.243-4.243L6.586 4.672z"/></svg></a>`;
+            } else {
+                const urlMatches = cleanBody.match(/(https?:\/\/[^\s]+)/g);
+                if (urlMatches) {
+                    for (let url of urlMatches) {
+                        if (isImageUrl(url)) {
+                            imageLinkHtml = `<a href="${url}" target="_blank" class="header-link-btn" title="Buka Link Asli Gambar"><svg width="15" height="15" fill="currentColor" viewBox="0 0 16 16"><path d="M4.715 6.542 3.343 7.914a3 3 0 1 0 4.243 4.243l1.828-1.829A3 3 0 0 0 8.586 5.5L8 6.086a1.002 1.002 0 0 0-.154.199 2 2 0 0 1 .861 3.337L6.88 11.45a2 2 0 1 1-2.83-2.83l.793-.792a4.018 4.018 0 0 1-.128-1.287z"/><path d="M6.586 4.672A3 3 0 0 0 7.414 9.5l.775-.776a2 2 0 0 1-.896-3.346L9.12 3.55a2 2 0 1 1 2.83 2.83l-.793.792c.112.42.155.855.128 1.287l1.372-1.372a3 3 0 1 0-4.243-4.243L6.586 4.672z"/></svg></a>`;
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            bubble.innerHTML = `
+                <div class="msg-meta items-center flex justify-between">
+                    <div class="flex gap-2 items-center">
+                        <span class="msg-sender ${type === 'admin' ? 'sender-admin' : 'sender-user'}">
+                            ${type === 'admin' ? 'Admin' : 'User'} 
+                            ${isPending ? '<span class="text-red-600 font-black">⚠️ BELUM TERKIRIM</span>' : ''}
+                        </span>
+                        <span>${lines[0]}</span>
+                    </div>
+                    <div class="flex items-center gap-1">
+                        ${imageLinkHtml}
+                        <button onclick="copyMessage(this)" data-text="${textToCopy}" class="copy-btn" title="Salin Pesan">
+                            <svg class="copy-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                        </button>
+                    </div>
+                </div>
+                ${quotedHtml}
+                <div class="whitespace-pre-wrap text-[13.5px] ${isPending ? 'text-red-700 font-medium' : ''}">${formatMessageContent(cleanBody)}</div>
+            `;
+            
+            fragment.appendChild(bubble);
+        });
+    });
+    
+    content.appendChild(fragment);
+    
+    if (forceScroll || isScrolledToBottom) {
+        chatWin.scrollTo({ top: chatWin.scrollHeight });
+    }
+}
+
+    // Variabel untuk menampung data file
+    let selectedFileData = null;
+
+    function handleFileSelect(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        // Tampilkan panel
+        document.getElementById('attachment-panel').classList.remove('hidden');
+        document.getElementById('file-name-display').innerText = file.name;
+        
+        // Cek apakah gambar atau dokumen untuk icon
+        const isImage = file.type.startsWith('image/');
+        document.getElementById('file-icon').innerText = isImage ? '🖼️' : '📄';
+
+        // Convert ke Base64
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            selectedFileData = {
+                base64: e.target.result, // Format: data:image/png;base64,iVBORw0KGgo...
+                name: file.name,
+                mimeType: file.type,
+                type: isImage ? 'image' : 'document'
+            };
+        };
+        reader.readAsDataURL(file);
+    }
+
+    function clearAttachment() {
+        document.getElementById('file-input').value = "";
+        selectedFileData = null;
+        document.getElementById('attachment-panel').classList.add('hidden');
+    }
+
+    function triggerSend() {
+        const input = document.getElementById('msg-input');
+        const btn = document.getElementById('send-btn');
+        const text = input.value.trim();
+        
+        // 1. Validasi
+        if ((!text && !selectedFileData) || !currentContactId || btn.disabled) return;
+        
+        const row = allData.find(r => r[1] === currentContactId);
+        
+        // [BLOK KODE BARU] Parsing waNo responsif untuk Grup dan Personal
+        let waNo = currentContactId;
+        if (waNo.includes('@g.us')) {
+            // Jika Grup: Potong tepat setelah @g.us (membuang ekstensi akun admin di belakangnya)
+            waNo = waNo.split('@g.us')[0] + '@g.us';
+        } else {
+            // Jika Personal: Potong pada titik separator dan bersihkan semua karakter non-angka
+            waNo = waNo.split('.')[0].replace(/\D/g, '');
+        }
+        
+        // --- AMBIL KREDENSIAL DARI ARRAY ---
+        const apiURLTarget = String(row[32] || "");
+        const apiKeyTarget = String(row[31] || "");
+        
+        // DETEKSI PROVIDER
+        const isStarsender = apiURLTarget.toLowerCase().includes('starsender');
+        const isFonnte = apiURLTarget.toLowerCase().includes('fonnte'); // Deteksi Fonnte
+        
+        // 2. Tampilan Loading UI
+        btn.disabled = true; btn.classList.add('opacity-70');
+        document.getElementById('send-icon').classList.add('hidden');
+        document.getElementById('send-loading').classList.remove('hidden');
+        input.disabled = true;
+        
+        // 3. Susun Payload Sesuai Provider
+        let payload = {};
+        if (selectedFileData) {
+            if (isStarsender) {
+                payload = { "messageType": selectedFileData.type === "document" ? "document" : "media", "to": waNo, "body": text || " ", "file": "AKAN_DIISI_OLEH_GAS" };
+            } else if (isFonnte) {
+                // Payload khusus lampiran media untuk Fonnte
+                payload = { "target": waNo, "message": text || " ", "url": "AKAN_DIISI_OLEH_GAS" };
+            } else {
+                // Payload OneSender
+                const mediaType = selectedFileData.type === "document" ? "document" : "image";
+                payload = { "recipient_type": "individual", "to": waNo, "type": mediaType, [mediaType]: { "link": "AKAN_DIISI_OLEH_GAS", "caption": text } };
+            }
+        } else {
+            // Pengiriman Teks Biasa
+            if (isStarsender) {
+                payload = { "messageType": "text", "to": waNo, "body": text };
+            } else if (isFonnte) {
+                // Payload khusus teks untuk Fonnte
+                payload = { "target": waNo, "message": text };
+            } else {
+                // Payload khusus teks OneSender
+                payload = { "recipient_type": "individual", "to": waNo, "type": "text", "text": { "body": text } };
+            }
+        }
+        
+        // Data paket yang akan dikirim ke Backend
+        const requestData = { 
+            apiUrl: apiURLTarget, 
+            apiKey: apiKeyTarget, 
+            payload: payload,
+            fileData: selectedFileData,
+            uniqueId: currentContactId, 
+            sheetInput: SHEET_URL 
+        };
+        
+        // 4. EKSEKUSI NATIVE JALUR DALAM
+        google.script.run
+            .withSuccessHandler(function(responseStr) {
+                const result = JSON.parse(responseStr);
+                if (result.status === "success") { 
+                    input.value = ""; 
+                    input.style.height = 'auto'; 
+                    clearAttachment(); 
+                    showToast("Pesan Terkirim!"); 
+                    setTimeout(fetchData, 2000); 
+                } else {
+                    showToast("Gagal: " + (result.message || ""));
+                }
+                resetBtn();
+            })
+            .withFailureHandler(function(error) {
+                showToast("Error Koneksi ke Server UI");
+                resetBtn();
+            })
+            .processUIPostNative(requestData);
+
+        // Fungsi pembantu kembalikan tombol
+        function resetBtn() {
+            btn.disabled = false; 
+            btn.classList.remove('opacity-70'); 
+            document.getElementById('send-icon').classList.remove('hidden'); 
+            document.getElementById('send-loading').classList.add('hidden'); 
+            input.disabled = false; 
+            input.focus(); 
+        }
+    }
+    
+    function showToast(msg) {
+        const t = document.createElement('div');
+        // Ubah z-[200] menjadi z-[10000] agar tampil di atas layar login
+        t.className = "fixed bottom-24 left-1/2 -translate-x-1/2 bg-gray-800 text-white px-5 py-2.5 rounded-full text-sm z-[10000] shadow-xl";
+        t.innerText = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 2500);
+    }
+
+    // --- FUNGSI COPY PESAN ---
+    function copyMessage(btn) {
+        if (!btn) return;
+        const text = btn.getAttribute('data-text') || btn.dataset.text || '';
+        copyToClipboard(text, btn, "Teks berhasil disalin!");
+    }
+
+    // --- FUNGSI MODAL GAMBAR FULLSCREEN ---
+    function openImageModal(src) {
+        const modal = document.getElementById('image-modal');
+        const modalImg = document.getElementById('image-modal-content');
+        modal.style.display = "block";
+        modalImg.src = src;
+    }
+
+    function closeImageModal() {
+        document.getElementById('image-modal').style.display = "none";
+    }
+
+    // Menutup gambar fullscreen jika pengguna mengklik area luar gambar
+    window.onclick = function(event) {
+        const modal = document.getElementById('image-modal');
+        if (event.target === modal) {
+            closeImageModal();
+        }
+    }
+
+    // --- FUNGSI MENAMBAHKAN TEKS/EMOJI ---
+    function addText(text) {
+        const input = document.getElementById('msg-input');
+        
+        // Tambahkan teks/emoji ke dalam textarea
+        input.value += text;
+        
+        // Kembalikan fokus ke textarea agar user bisa langsung lanjut mengetik
+        input.focus();
+        
+        // Pancing event 'input' agar textarea otomatis menyesuaikan tinggi (auto-resize)
+        input.dispatchEvent(new Event('input'));
+    }
+
+    // Variabel global untuk menampung label dari Setting F13
+    let masterLabelsList = [];
+
+    // Mengambil daftar label saat web pertama kali dimuat
+    function fetchMasterLabels() {
+        if (!SHEET_URL) return;
+        google.script.run
+            .withSuccessHandler(function(labelsString) {
+                // Memecah string "AE, ABC, SV" menjadi array
+                masterLabelsList = labelsString.split(',').map(l => l.trim()).filter(l => l !== "");
+            })
+            .getAvailableLabels(SHEET_URL);
+    }
+
+    // Panggil fungsi ini agar berjalan otomatis di background
+    setTimeout(fetchMasterLabels, 2000); 
+
+    let isAddContactMode = false;
+
+    // HELPER DUA ARAH UNTUK INPUT DATETIME-LOCAL <-> FORMAT YYYY-MM-DD HH:MM:SS
+    function formatForDatetimeLocal(dateStr) {
+        if (!dateStr) return "";
+        let formatted = String(dateStr).trim().replace(' ', 'T');
+        if (formatted.length > 16) {
+            formatted = formatted.substring(0, 16);
+        }
+        return formatted;
+    }
+
+    function formatFromDatetimeLocal(dtValue) {
+        if (!dtValue) return "";
+        let formatted = String(dtValue).trim().replace('T', ' ');
+        if (formatted.length === 16) {
+            formatted += ":00";
+        }
+        return formatted;
+    }
+
+    // FUNGSI UPDATE REAL-TIME UNTUK TAMBAH KONTAK BARU (KOLOM E, F, & B)
+    function updateAddContactFormFields() {
+        if (!isAddContactMode) return;
+        
+        let rawWa = document.getElementById('edit-wa-customer')?.value || "";
+        let waCust = rawWa.trim().replace(/\D/g, '');
+        if (waCust.startsWith('0')) {
+            waCust = '62' + waCust.substring(1);
+        }
+        
+        let devSelect = document.getElementById('edit-device-select');
+        let devNum = devSelect ? devSelect.value.trim().replace(/\D/g, '') : "";
+        
+        let idWa = "";
+        if (waCust && devNum) {
+            idWa = `${waCust}.@admin${devNum}`;
+        } else if (waCust) {
+            idWa = waCust;
+        }
+        
+        const idInput = document.getElementById('edit-id-networking');
+        if (idInput) {
+            idInput.value = idWa;
+        }
+        
+        generateFirstName();
+    }
+
+    // FUNGSI MEMBUKA MODAL TAMBAH KONTAK BARU
+    function openAddContactModal() {
+        isAddContactMode = true;
+        
+        const titleEl = document.getElementById('edit-modal-title');
+        if (titleEl) titleEl.innerText = "➕ Tambah Kontak Baru";
+        
+        const btnDel = document.getElementById('btn-delete-profile');
+        if (btnDel) btnDel.classList.add('hidden');
+        
+        // Tampilkan Wadah Input Kolom E & F
+        const addContainer = document.getElementById('container-add-contact-fields');
+        if (addContainer) addContainer.classList.remove('hidden');
+        
+        // Populate Dropdown Device (Kolom E)
+        const devSelect = document.getElementById('edit-device-select');
+        if (devSelect) {
+            devSelect.innerHTML = '<option value="">-- Pilih Device Server (Kolom E) --</option>';
+            let devices = window.globalRawDevicesMaster || (typeof deviceCache !== 'undefined' ? deviceCache : []);
+            devices.forEach(d => {
+                let devNum = String(d.fullRow ? d.fullRow[6] : d.providerId || "").trim();
+                let devLabel = String(d.fullRow ? d.fullRow[0] : d.csName || "").trim();
+                if (devNum) {
+                    devSelect.innerHTML += `<option value="${devNum}">${devLabel} (${devNum})</option>`;
+                }
+            });
+        }
+        
+        const waCustInput = document.getElementById('edit-wa-customer');
+        if (waCustInput) waCustInput.value = "";
+        
+        const netInput = document.getElementById('edit-id-networking');
+        if (netInput) {
+            netInput.setAttribute('readonly', 'readonly');
+            netInput.classList.add('bg-gray-50', 'cursor-not-allowed');
+            netInput.classList.remove('bg-white');
+            netInput.value = "";
+            netInput.placeholder = "Otomatis terisi...";
+        }
+        
+        const copyBtn = document.getElementById('btn-copy-id-networking');
+        if (copyBtn) copyBtn.classList.add('hidden');
+        
+        document.getElementById('edit-name-input').value = "";
+        document.getElementById('edit-nama-lengkap').value = "";
+        document.getElementById('edit-biodata-input').value = "";
+        document.getElementById('edit-fuf-day').value = 7;
+        document.getElementById('edit-fuf').value = 0;
+        
+        const d = new Date();
+        d.setDate(d.getDate() + 7);
+        const pad = n => String(n).padStart(2, '0');
+        const defaultNextSend = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+        document.getElementById('edit-next-send').value = formatForDatetimeLocal(defaultNextSend);
+        
+        document.getElementById('edit-ad').value = "TRUE";
+        document.getElementById('edit-first-name').value = "";
+        document.getElementById('edit-limit-history').value = "";
+        
+        const appendHistEl = document.getElementById('edit-append-history');
+        if (appendHistEl) {
+            appendHistEl.value = "";
+            appendHistEl.style.height = 'auto';
+        }
+        
+        const container = document.getElementById('edit-labels-container');
+        container.innerHTML = "";
+        if (masterLabelsList.length === 0) {
+            container.innerHTML = '<span class="text-xs text-red-400">Gagal memuat label.</span>';
+        } else {
+            masterLabelsList.forEach(label => {
+                const isChecked = label.toUpperCase() === "NEW" || label.toUpperCase() === "ABC" ? "checked" : "";
+                container.innerHTML += `
+                    <label class="flex items-center gap-2 p-2 bg-white hover:bg-emerald-50/70 cursor-pointer transition-colors border border-gray-200/80 hover:border-emerald-300 rounded-xl">
+                        <input type="checkbox" value="${label}" class="label-checkbox w-4 h-4 text-[#00a884] accent-[#00a884] rounded cursor-pointer shrink-0" ${isChecked}>
+                        <span class="text-xs font-semibold text-gray-700 truncate" title="${label}">${label}</span>
+                    </label>
+                `;
+            });
+        }
+        document.getElementById('edit-modal').classList.remove('hidden');
+    }
+
+    // Fungsi membuka modal saat avatar diklik
+function openEditModal() {
+    if (!currentContactId) return;
+    const row = allData.find(r => r[1] === currentContactId);
+    if (!row) return;
+
+    isAddContactMode = false;
+    
+    const titleEl = document.getElementById('edit-modal-title');
+    if (titleEl) titleEl.innerText = "Edit Profil Kontak";
+    
+    const btnDel = document.getElementById('btn-delete-profile');
+    if (btnDel) btnDel.classList.remove('hidden');
+    
+    const addContainer = document.getElementById('container-add-contact-fields');
+    if (addContainer) addContainer.classList.add('hidden');
+    
+    const netInput = document.getElementById('edit-id-networking');
+    if (netInput) {
+        netInput.setAttribute('readonly', 'readonly');
+        netInput.classList.add('bg-gray-50', 'cursor-not-allowed');
+        netInput.classList.remove('bg-white');
+        netInput.value = row[1] || "";
+    }
+    
+    const copyBtn = document.getElementById('btn-copy-id-networking');
+    if (copyBtn) copyBtn.classList.remove('hidden');
+
+    // Data Bawaan
+    document.getElementById('edit-name-input').value = row[7] || "";
+    document.getElementById('edit-nama-lengkap').value = row[8] || "";
+    document.getElementById('edit-biodata-input').value = row[9] || "";
+    
+    // BLOK KODE BARU: Setup Data Lanjutan (AA-AF)
+    let fufDayVal = row[26] !== "" && row[26] !== undefined ? row[26] : 7;
+    document.getElementById('edit-fuf-day').value = fufDayVal;
+    
+    let fufVal = row[27] !== "" && row[27] !== undefined ? row[27] : 0;
+    document.getElementById('edit-fuf').value = fufVal;
+    
+    document.getElementById('edit-next-send').value = formatForDatetimeLocal(row[28] || "");
+    
+    let adVal = String(row[29] || "").toUpperCase() === "FALSE" ? "FALSE" : "TRUE";
+    document.getElementById('edit-ad').value = adVal;
+    
+    document.getElementById('edit-first-name').value = row[30] || "";
+    document.getElementById('edit-limit-history').value = row[20] !== "" && row[20] !== undefined ? row[20] : "";
+    const appendHistEl = document.getElementById('edit-append-history');
+    if (appendHistEl) {
+        appendHistEl.value = "";
+        appendHistEl.style.height = 'auto';
+    }
+
+    // Generate Checkbox Label
+    const currentLabels = (row[2] || "").toUpperCase().split(',').map(l => l.trim());
+    const container = document.getElementById('edit-labels-container');
+    container.innerHTML = "";
+    
+    if (masterLabelsList.length === 0) {
+        container.innerHTML = '<span class="text-xs text-red-400">Gagal memuat label.</span>';
+    } else {
+        masterLabelsList.forEach(label => {
+            const isChecked = currentLabels.includes(label.toUpperCase()) ? "checked" : "";
+            container.innerHTML += `
+                <label class="flex items-center gap-2 p-2 bg-white hover:bg-emerald-50/70 cursor-pointer transition-colors border border-gray-200/80 hover:border-emerald-300 rounded-xl">
+                    <input type="checkbox" value="${label}" class="label-checkbox w-4 h-4 text-[#00a884] accent-[#00a884] rounded cursor-pointer shrink-0" ${isChecked}>
+                    <span class="text-xs font-semibold text-gray-700 truncate" title="${label}">${label}</span>
+                </label>
+            `;
+        });
+    }
+    document.getElementById('edit-modal').classList.remove('hidden');
+}
+
+function copyNetworkingId(btn) {
+    const idNet = document.getElementById('edit-id-networking').value;
+    copyToClipboard(idNet, btn, "✅ ID Networking disalin!");
+}
+
+// BLOK KODE BARU: Algoritma Pembuat First Name Dinamis
+function generateFirstName() {
+    const row = allData.find(r => r[1] === currentContactId) || [];
+    
+    let akun = String(row[0] || "ACC1");
+    let prefixAkun = akun.substring(0, 2);
+    
+    let deviceNum = String(row[4] || "01").replace(/\D/g, '');
+    let suffixDevice = deviceNum.slice(-4);
+    
+    const checkboxes = document.querySelectorAll('.label-checkbox:checked');
+    const labels = Array.from(checkboxes).map(cb => cb.value.toUpperCase());
+    
+    let labelVal = "";
+    if (labels.includes("SV")) labelVal = ".SV";
+    else if (labels.includes("ABC")) labelVal = ".ABC";
+    else if (labels.includes("NEW")) labelVal = ".NEW";
+    
+    let namaPanggilan = document.getElementById('edit-name-input').value.trim();
+    if (namaPanggilan !== "") namaPanggilan = " " + namaPanggilan + " ";
+    else namaPanggilan = " ";
+    
+    let waCust = document.getElementById('edit-wa-customer')?.value.trim().replace(/\D/g, '') || document.getElementById('edit-id-networking').value.replace(/\D/g, '') || String(row[5] || "").replace(/\D/g, '');
+    if (waCust.startsWith('0')) waCust = '62' + waCust.substring(1);
+
+    let output = `${prefixAkun}${suffixDevice}${labelVal}${namaPanggilan}[${waCust}]`;
+    document.getElementById('edit-first-name').value = output;
+}
+
+async function saveProfile() {
+    const btn = document.getElementById('btn-save-profile');
+    
+    let devSelect = document.getElementById('edit-device-select');
+    let devNum = devSelect ? devSelect.value.trim().replace(/\D/g, '') : "";
+    let waCustRaw = document.getElementById('edit-wa-customer')?.value || "";
+    let waCust = waCustRaw.trim().replace(/\D/g, '');
+    if (waCust.startsWith('0')) waCust = '62' + waCust.substring(1);
+
+    const idNetInput = document.getElementById('edit-id-networking').value.trim();
+
+    if (isAddContactMode) {
+        if (!devNum) {
+            showToast("⚠️ Silakan pilih Device Server (Kolom E)!");
+            return;
+        }
+        if (!waCust) {
+            showToast("⚠️ Silakan isi Nomor WA Customer (Kolom F)!");
+            return;
+        }
+        // [FUNGSI BARU] Validasi Duplikat Networking (Kolom B)
+        const isDuplicate = await checkDuplicateAndWarn(idNetInput);
+        if (isDuplicate) return;
+    }
+
+    const targetUniqueId = isAddContactMode ? idNetInput : currentContactId;
+
+    // Lookup Nama Device (Kolom D) & Akun CS (Kolom A) dari Setting Sheet berdasarkan Nomor Device (Kolom E / devNum)
+    let colD_deviceName = "";
+    let colA_akunCS = "ACC1";
+    if (isAddContactMode) {
+        let devices = window.globalRawDevicesMaster || (typeof deviceCache !== 'undefined' ? deviceCache : []);
+        let matchedDev = devices.find(d => {
+            let num = String(d.fullRow ? d.fullRow[6] : d.providerId || "").trim().replace(/\D/g, '');
+            return num === devNum;
+        });
+        if (matchedDev) {
+            colD_deviceName = String(matchedDev.fullRow ? matchedDev.fullRow[0] : matchedDev.csName || "").trim();
+            colA_akunCS = String(matchedDev.fullRow ? matchedDev.fullRow[1] : matchedDev.csName || "ACC1").trim() || "ACC1";
+        }
+    }
+
+    const newName = document.getElementById('edit-name-input').value.trim();
+    const newNamaLengkap = document.getElementById('edit-nama-lengkap').value.trim();
+    const newBiodata = document.getElementById('edit-biodata-input').value.trim();
+    
+    const checkboxes = document.querySelectorAll('.label-checkbox:checked');
+    const newLabels = Array.from(checkboxes).map(cb => cb.value).join(', ');
+
+    const appendHistInput = document.getElementById('edit-append-history');
+    const newAppendHistory = appendHistInput ? appendHistInput.value.trim() : "";
+
+    const rawNextSend = document.getElementById('edit-next-send').value;
+    const finalNextSendStr = formatFromDatetimeLocal(rawNextSend);
+
+    // Kumpulkan Nilai Data Baru
+    const dataObj = {
+        name: newName,
+        namaLengkap: newNamaLengkap,
+        biodata: newBiodata,
+        labels: newLabels,
+        akun: colA_akunCS,             // Kolom A (Akun CS dari Setting Kolom B)
+        device: colD_deviceName,        // Kolom D (Nama Device)
+        deviceNum: devNum,             // Kolom E (Nomor Device)
+        waPhone: waCust,               // Kolom F (WA Customer)
+        fufDay: document.getElementById('edit-fuf-day').value,
+        fuf: document.getElementById('edit-fuf').value,
+        nextSend: finalNextSendStr,
+        editAd: document.getElementById('edit-ad').value,
+        firstName: document.getElementById('edit-first-name').value,
+        limitHistory: document.getElementById('edit-limit-history').value,
+        appendHistory: newAppendHistory,
+        isNewContact: isAddContactMode
+    };
+
+    btn.innerHTML = `<div class="flex items-center justify-center gap-2"><div class="spinner-small"></div><span>Menyimpan...</span></div>`;
+    btn.disabled = true;
+    btn.classList.add('opacity-70');
+
+    google.script.run
+        .withSuccessHandler(function(status) {
+            if (status === "success") {
+                if (isAddContactMode) {
+                    const pad = n => String(n).padStart(2, '0');
+                    const now = new Date();
+                    const nowStr = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+                    const yy = String(now.getFullYear()).slice(-2);
+                    const mm = pad(now.getMonth()+1);
+                    const dd = pad(now.getDate());
+                    const colM_format = "id" + yy + mm + dd; // Rumus idyymmdd (misal: id261110)
+                    
+                    const newRow = [
+                        colA_akunCS, targetUniqueId, newLabels || "NEW", colD_deviceName, devNum, waCust, "",
+                        newName, newNamaLengkap, newBiodata, nowStr, "{}", colM_format, false,
+                        "", "", "", 0, 0, newAppendHistory, dataObj.limitHistory, "Queue", "", "", "Manual Input UI", true,
+                        dataObj.fufDay, dataObj.fuf, dataObj.nextSend, dataObj.editAd === "FALSE" ? false : true, dataObj.firstName
+                    ];
+                    allData.unshift(newRow);
+                    currentContactId = targetUniqueId;
+                } else {
+                    const rowIndex = allData.findIndex(r => r[1] === currentContactId);
+                    if (rowIndex > -1) {
+                        allData[rowIndex][7] = dataObj.name; 
+                        allData[rowIndex][8] = dataObj.namaLengkap; 
+                        allData[rowIndex][2] = dataObj.labels; 
+                        allData[rowIndex][9] = dataObj.biodata; 
+                        allData[rowIndex][26] = dataObj.fufDay;
+                        allData[rowIndex][27] = dataObj.fuf;
+                        allData[rowIndex][28] = dataObj.nextSend;
+                        allData[rowIndex][29] = dataObj.editAd === "FALSE" ? false : true;
+                        allData[rowIndex][30] = dataObj.firstName;
+                        allData[rowIndex][20] = dataObj.limitHistory;
+                    }
+                }
+                
+                document.getElementById('edit-modal').classList.add('hidden');
+                
+                if (currentContactId) {
+                    const nameDisp = document.getElementById('chat-name');
+                    if (nameDisp) nameDisp.innerText = newName || targetUniqueId;
+                    const badges = document.getElementById('chat-badges');
+                    if (badges) {
+                        const isUnsub = newLabels.replace(/\s+/g, '').toUpperCase().includes("UNSUBAI");
+                        badges.innerHTML = (newLabels ? `<span class="badge-wa !bg-white/20 !text-white border-none">${newLabels}</span>` : '') + (isUnsub ? `<span class="badge-unsub-ai !bg-red-500 !text-white border-white/40">UNSUB AI</span>` : '');
+                    }
+                }
+                
+                renderSidebar();
+                if (isAddContactMode) {
+                    openChat();
+                    refreshChat();
+                    showToast("✅ Kontak baru berhasil ditambahkan!");
+                } else {
+                    showToast("Profil Lengkap & Setup FUF berhasil diperbarui!");
+                }
+            } else {
+                showToast("Gagal menyimpan data ke Database.");
+            }
+            btn.innerText = "Simpan";
+            btn.disabled = false;
+            btn.classList.remove('opacity-70');
+        })
+        .withFailureHandler(function(e) {
+            showToast("Error koneksi jaringan saat menyimpan.");
+            btn.innerText = "Simpan";
+            btn.disabled = false;
+            btn.classList.remove('opacity-70');
+        })
+        .updateContactProfileFullNative(SHEET_URL, targetUniqueId, dataObj);
+}
+
+    // --- FUNGSI TOGGLE PESAN STATIS ---
+    function togglePesanStatis() {
+        const statusB20 = document.getElementById('send-3').value;
+        const wrapperB21 = document.getElementById('wrapper-send-4');
+        
+        // Jika value mengandung kata "Aktif" (mengabaikan huruf besar/kecil)
+        if (statusB20 && statusB20.toLowerCase().trim() === 'aktif') {
+            wrapperB21.classList.remove('hidden');
+        } else {
+            wrapperB21.classList.add('hidden');
+        }
+    }
+
+// --- FUNGSI BARU: TARIK DATA DEVICE DI BACKGROUND ---
+function fetchSilentDeviceCache(callback) {
+    if (!SHEET_URL) return;
+    google.script.run
+        .withSuccessHandler(function(data) {
+            if (data && data.devices) {
+                // 1. Suntik Webhook
+                if (document.getElementById('webhook-url-display')) {
+                    document.getElementById('webhook-url-display').value = data.webhookUrl || "A2 Kosong / URL belum dideteksi";
+                }
+                
+                // 2. Suntik B23 & B24 ke Global Memory
+                if (data.send) {
+                    sysDayTier2 = data.send[6] || "-";
+                    sysRasioTier2 = data.send[7] ? (parseFloat(data.send[7]) * 100) + "%" : "-";
+                }
+                
+                // 3. Simpan Bank Content ke memori Frontend
+                if (data.bankContent) globalBankContentCache = data.bankContent;
+                
+                let rawDevices = data.devices || [];
+                window.globalRawDevicesMaster = rawDevices;
+                if (data.akunList) window.globalAkunListMaster = data.akunList;
+                
+                // Ekstraksi Khusus CS: Filter berdasarkan Nomor Server (Kolom G)
+                if (typeof isCS !== 'undefined' && isCS) {
+                    let csNum = userAllowedAccounts[0].substring(3);
+                    deviceCache = rawDevices.filter(d => String(d.fullRow[6] || "").trim() === csNum);
+                    if (deviceCache.length > 0 && deviceCache[0].fullRow) {
+                        userMenuAccess = String(deviceCache[0].fullRow[29] || "").trim();
+                        localStorage.setItem('omni_menuAccess', userMenuAccess);
+                    }
+                } 
+                // Ekstraksi Khusus Admin Biasa
+                else if (typeof isMasterAdmin !== 'undefined' && !isMasterAdmin && typeof userAllowedAccounts !== 'undefined') {
+                    deviceCache = rawDevices.filter(d => {
+                        let akunDevice = String(d.fullRow[1] || "").trim();
+                        return userAllowedAccounts.includes(akunDevice);
+                    });
+                } 
+                // Ekstraksi Master Admin
+                else {
+                    deviceCache = rawDevices;
+                }
+                updateDeviceFilter(); 
+                applyFinanceAccessControl();
+                applyTaskAccessControl();
+                applyChatAccessControl();
+                handleCSAutoRedirect();
+                if (typeof callback === 'function') callback(deviceCache);
+            }
+        })
+        .getSettingsForUI(SHEET_URL);
+}
+
+// --- FUNGSI BARU: AUTOSINKRONISASI JIKA MANAJEMEN DEVICE SELESAI DIEDIT / TAMBAH BARU / HAPUS ---
+function syncDeviceDataAfterChange(customMsg) {
+    showToast(customMsg || "🔄 Autosinkronisasi data device sedang berjalan...");
+
+    // Indikator visual loading pada list device jika modal sedang terbuka
+    const listEl = document.getElementById('device-list');
+    if (listEl && !document.getElementById('config-modal').classList.contains('hidden')) {
+        listEl.innerHTML = `<div class="col-span-full py-8 text-center text-xs text-[#008069] font-bold italic animate-pulse flex flex-col items-center gap-2">
+            <div class="spinner-small mx-auto"></div>
+            <span>Mensinkronkan data device terbaru dari server...</span>
+        </div>`;
+    }
+
+    // Tarik data device & setting terbaru dari server
+    fetchSilentDeviceCache(function(newDeviceCache) {
+        // 1. Render ulang tampilan card device jika panel terbuka
+        if (!document.getElementById('config-modal').classList.contains('hidden') && 
+            !document.getElementById('section-device-list').classList.contains('hidden')) {
+            renderDeviceList();
+        }
+
+        // 2. Jalankan sinkronisasi data obrolan / kontak utama
+        fetchData();
+
+        // 3. Refreshed Device Setting & Pinned Info jika chat sedang aktif
+        if (typeof currentContactId !== 'undefined' && currentContactId) {
+            const contact = allData.find(r => r[1] === currentContactId);
+            if (contact) {
+                const updatedDevSetting = newDeviceCache.find(d => 
+                    d.providerId === contact[4] || String(d.fullRow[0] || "").trim() === contact[4]
+                );
+                currentActiveDeviceSetting = updatedDevSetting || null;
+
+                // Update pinned message container
+                const pinnedContainer = document.getElementById('pinned-msg-container');
+                const pinnedTextEl = document.getElementById('pinned-msg-text');
+                const catatanDevice = updatedDevSetting && updatedDevSetting.fullRow ? String(updatedDevSetting.fullRow[3] || "").trim() : "";
+
+                if (pinnedContainer && pinnedTextEl) {
+                    if (catatanDevice !== "" && catatanDevice !== "-") {
+                        pinnedTextEl.innerText = catatanDevice;
+                        pinnedContainer.classList.remove('hidden');
+                    } else {
+                        pinnedContainer.classList.add('hidden');
+                    }
+                }
+
+                // Update warning status device OFF
+                const deviceOffWarning = document.getElementById('device-off-msg');
+                const isDeviceOff = updatedDevSetting && String(updatedDevSetting.fullRow[2] || "").trim().toUpperCase() === "DEVICE OFF";
+                if (deviceOffWarning) {
+                    if (isDeviceOff) {
+                        deviceOffWarning.classList.remove('hidden');
+                    } else {
+                        deviceOffWarning.classList.add('hidden');
+                    }
+                }
+            }
+        }
+
+        showToast("✅ Autosinkronisasi device selesai!");
+    });
+}
+</script>

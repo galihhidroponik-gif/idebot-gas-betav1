@@ -1,0 +1,132 @@
+<div class="chat-area" id="chat-container">
+   <!-- HEADER OMNICHANNEL REFACTOR: 3-ROW CLEAN DESIGN -->
+    <div id="active-header" class="bg-white px-3 py-2 text-gray-800 flex items-center gap-2 sm:gap-3 z-10 shadow-md h-auto min-h-[60px] border-b order-gray-200 transition-all duration-200">
+        <button onclick="closeChat()" class="md:hidden p-1 mr-[-4px] shrink-0 text-gray-500 hover:bg-gray-100 rounded-full transition-colors">
+            <svg width="22" height="22" fill="currentColor" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M15 8a.5.5 0 0 0-.5-.5H2.707l3.147-3.146a.5.5 0 1 0-.708-.708l-4 4a.5.5 0 0 0 0 .708l4 4a.5.5 0 0 0 .708-.708L2.707 8.5H14.5A.5.5 0 0 0 15 8z"/></svg>
+        </button>
+        
+        <div id="chat-avatar" onclick="openEditModal()" class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg border border-white/20 cursor-pointer hover:opacity-80 transition-opacity shadow-sm shrink-0" title="Edit Profil">?</div>
+        
+        <!-- Kontainer Kolom (Stacking 3 Baris Proporsional) -->
+        <div class="flex-1 min-w-0 flex flex-col justify-center gap-0.5 w-full overflow-hidden">
+            
+            <!-- Baris 1: Nama, Edit, Badges (Scroll Horizontal, Rapat Kiri) -->
+            <div class="flex items-center justify-start gap-1.5 w-full overflow-x-auto no-scrollbar whitespace-nowrap pb-0.5">
+                <div id="chat-name" class="font-bold truncate leading-tight text-[14px] sm:text-[15px] shrink-0">Pilih Kontak</div>
+                <button onclick="openEditModal()" class="text-gray-400 hover:text-gray-800 shrink-0 cursor-pointer" title="Edit Profil">
+                    <svg width="12" height="12" fill="currentColor" viewBox="0 0 16 16"><path d="M12.146.146a.5.5 0 0 1 .708 0l3 3a.5.5 0 0 1 0 .708l-10 10a.5.5 0 0 1-.168.11l-5 2a.5.5 0 0 1-.65-.65l2-5a.5.5 0 0 1 .11-.168l10-10zM11.207 2.5 13.5 4.793 14.793 3.5 12.5 1.207 11.207 2.5zm1.586 3L10.5 3.207 4 9.707V10h.5a.5.5 0 0 1 .5.5v.5h.5a.5.5 0 0 1 .5.5v.5h.293l6.5-6.5zm-9.761 5.175-.106.106-1.528 3.821 3.821-1.528.106-.106A.5.5 0 0 1 5 12.5V12h-.5a.5.5 0 0 1-.5-.5V11h-.5a.5.5 0 0 1-.468-.325z"/></svg>
+                </button>
+                <!-- Wadah Badges Label (Dihapus class penarik kanan, kini alami merapat ke kiri) -->
+                <div id="chat-badges" class="flex items-center gap-1 pr-1 shrink-0"></div>
+            </div>
+            
+            <!-- Baris 2: WA & RFM (Rapat Kiri) -->
+            <div class="flex items-center justify-start gap-1.5 text-[9px] sm:text-[10px] text-gray-500 overflow-x-auto no-scrollbar whitespace-nowrap w-full">
+                <!-- Kotak WA & Copy -->
+                <div class="flex items-center gap-1 bg-gray-100 px-1.5 py-0.5 rounded shadow-sm border border-gray-200 text-gray-700 shrink-0 max-w-[160px]">
+                    <span id="chat-id" class="truncate min-w-0" title="ID Lengkap">WA: -</span>
+                    <button id="btn-copy-id" onclick="copyContactId()" class="hidden text-gray-400 hover:text-gray-800 transition-colors p-0.5 shrink-0" title="Copy Nomor WA">
+                        <svg width="11" height="11" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                    </button>
+                </div>
+
+                <!-- Wadah RFM -->
+                <div id="rfm-display" class="empty:hidden shrink-0"></div>
+            </div>
+
+            <!-- Baris 3: PREVIEW CATATAN UNIVERSAL (Rapat Kiri) -->
+            <div id="note-container" class="hidden items-center justify-start gap-1 w-full text-[9px] sm:text-[10px] mt-0.5">
+                <!-- Ditambahkan max-w-[80%] dan dibuang flex-1 agar teks hanya selebar isi tanpa mendorong logo -->
+                <div class="truncate max-w-[80%] text-gray-500 italic cursor-pointer hover:text-white transition-colors" onclick="showCustomerNotes()" title="Klik untuk baca detail catatan">
+                    <span id="note-preview"></span>
+                </div>
+                <!-- Tombol Catatan Readmore (Kini menempel langsung di ujung kanan teks catatan) -->
+                <button id="btn-show-notes" onclick="showCustomerNotes()" class="bg-gray-100 hover:bg-gray-200 border-gray-200 text-gray-500 p-1 rounded transition-colors flex items-center justify-center border shadow-sm shrink-0" title="Baca Semua Catatan">
+                    <svg width="9" height="9" fill="currentColor" viewBox="0 0 16 16"><path d="M14 1a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H4.414A2 2 0 0 0 3 11.586l-2 2V2a1 1 0 0 1 1-1h12zM2 0a2 2 0 0 0-2 2v12.793a.5.5 0 0 0 .854.353l2.853-2.853A1 1 0 0 1 4.414 12H14a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H2z"/><path d="M3 3.5a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 1-.5-.5zM3 6a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9A.5.5 0 0 1 3 6zm0 2.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5z"/></svg>
+                </button>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- BLOK KODE BARU: TASK QUICK BAR + PINNED MESSAGE DEVICE INFO -->
+    <div id="chat-pin-task-bar" class="hidden bg-[#f0f2f5] border-b border-gray-200 px-3 py-1.5 flex items-center gap-2 shadow-sm z-10">
+        <!-- Wadah Badge Task & Quick Add Task (Sebelah Kiri Pin) -->
+        <div id="chat-task-badge-container" class="flex items-center gap-1 shrink-0">
+            <button id="btn-chat-task-badge" onclick="openCustomerTaskListPopup()" class="hidden items-center gap-1 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer transition-colors shadow-sm" title="Klik untuk Lihat Daftar Task Konsumen ini">
+                <span>📋</span>
+                <span id="chat-task-badge-text">0 Task</span>
+            </button>
+            <button id="btn-quick-add-task" onclick="openTaskForCurrentContact()" class="hidden items-center gap-0.5 bg-blue-600 hover:bg-blue-700 text-white px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer transition-colors shadow-sm" title="Tambah Task Baru untuk Konsumen ini">
+                <span>+ Task</span>
+            </button>
+        </div>
+
+        <!-- Area Catatan Pin Device (Sebelah Kanan dengan Pemisah Garis Vertikal) -->
+        <div id="pinned-msg-container" class="hidden flex-1 min-w-0 flex items-center gap-1.5 border-l border-gray-300 pl-2 cursor-pointer hover:bg-gray-200/70 rounded px-1 py-0.5 transition-colors" onclick="showSingleDeviceTooltip()">
+            <svg width="13" height="13" fill="#667781" viewBox="0 0 16 16" class="shrink-0"><path d="M4.146.146A.5.5 0 0 1 4.5 0h7a.5.5 0 0 1 .5.5c0 .68-.59 1.9-1.118 2.659-.187.267-.373.477-.5.6v4.841l.277.277a.5.5 0 0 1 .141.354v.5a.5.5 0 0 1-.5.5h-2v4.5a.5.5 0 0 1-1 0v-4.5h-2a.5.5 0 0 1-.5.5v-.5a.5.5 0 0 1 .141-.354l.277-.277V3.759c-.127-.123-.313-.333-.5-.6C4.59 2.4 4 1.18 4 .5a.5.5 0 0 1 .146-.354z"/></svg>
+            <div class="flex-1 truncate text-[11px] sm:text-[12px] text-gray-700 font-medium" id="pinned-msg-text"></div>
+        </div>
+    </div>
+
+    <div id="chat-window" class="flex-1 overflow-y-auto p-3 flex flex-col space-y-1">
+        <div id="chat-content" class="flex flex-col">
+            <div class="mt-20 text-center text-gray-400 italic text-sm px-10">Pilih pesan untuk mulai mengobrol.</div>
+        </div>
+    </div>
+
+    <!-- BLOK KODE BARU: ALERT API KOSONG -->
+    <div id="api-warning-msg" class="hidden bg-gray-50 border-t border-gray-200 p-3 flex flex-col items-center justify-center gap-1 pb-safe z-20">
+        <svg width="20" height="20" fill="currentColor" class="text-gray-400 mb-0.5" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M7.002 11a1 1 0 1 1 2 0 1 1 0 0 1-2 0zM7.1 4.995a.905.905 0 1 1 1.8 0l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 4.995z"/></svg>
+        <span class="text-xs font-bold text-gray-600">Koneksi API Belum Dikonfigurasi</span>
+        <span class="text-[10px] text-gray-500 font-medium text-center">Fitur kirim pesan tidak aktif karena API Key / URL pada Setting kosong.</span>
+    </div>
+
+    <!-- BLOK KODE BARU: ALERT LABEL TIDAK MEMENUHI SYARAT (ERROR 463) -->
+    <div id="error-463-msg" class="hidden bg-red-50 border-t border-red-200 p-3 flex flex-col items-center justify-center gap-1 pb-safe z-20">
+        <svg width="20" height="20" fill="currentColor" class="text-red-500 mb-0.5" viewBox="0 0 16 16"><path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/></svg>
+        <span class="text-xs font-bold text-red-700">Algoritma wa 463 (Anti-Spam)</span>
+        <span class="text-[10px] text-red-600 font-medium text-center">Kondisi konsumen tercatat belum pernah  balas pesan. Ubah kondisi ini bisa tambahkan label <b class="bg-white px-1 border border-red-200 rounded">ABC</b> pada profil.</span>
+    </div>
+
+    <!-- BLOK KODE BARU: ALERT DEVICE OFF -->
+    <div id="device-off-msg" class="hidden bg-orange-50 border-t border-orange-200 p-3 flex flex-col items-center justify-center gap-1 pb-safe z-20">
+        <svg width="20" height="20" fill="currentColor" class="text-orange-500 mb-0.5" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M7.002 11a1 1 0 1 1 2 0 1 1 0 0 1-2 0zM7.1 4.995a.905.905 0 1 1 1.8 0l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 4.995z"/></svg>
+        <span class="text-xs font-bold text-orange-700">Device Terputus/OFF</span>
+        <span class="text-[10px] text-orange-600 font-medium text-center">Fitur membalas pesan dinonaktifkan sementara karena status device di Setting (Kolom C) sedang "Device OFF".</span>
+    </div>
+
+    <div id="input-container" class="input-wrapper hidden">
+        <input type="file" id="file-input" class="hidden" onchange="handleFileSelect(event)" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx">
+        
+        <div id="attachment-panel" class="hidden px-3 pt-2 pb-1 bg-gray-200/50 border-b border-gray-200 flex gap-2 items-center transition-all shadow-inner">
+            <div class="bg-white p-2 rounded-lg shadow-sm flex-1 flex items-center justify-between">
+                <div class="flex items-center gap-2 overflow-hidden">
+                    <span id="file-icon" class="text-lg">📎</span>
+                    <span id="file-name-display" class="text-xs font-semibold text-gray-700 truncate">Pilih file...</span>
+                </div>
+                <button onclick="clearAttachment()" class="text-red-500 hover:bg-red-50 p-1 rounded-md text-xs font-bold transition-colors">Hapus</button>
+            </div>
+        </div>
+
+        <div class="emoji-panel">
+            <span class="emoji-btn text-[11px] font-black bg-amber-400 border-amber-500 text-amber-900" onclick="addText('AEr')">AEr</span>
+            <span class="emoji-btn" onclick="addText('🙏')">🙏</span>
+            <span class="emoji-btn" onclick="addText('😊')">😊</span>
+        </div>
+        
+        <div class="input-area">
+            <button onclick="document.getElementById('file-input').click()" class="text-gray-500 hover:text-[#008069] p-2 transition-colors -ml-1" title="Lampirkan File">
+                <svg width="22" height="22" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg>
+            </button>
+            
+            <textarea id="msg-input" class="message-input shadow-sm" placeholder="Ketik pesan..." rows="1"></textarea>
+            <button onclick="triggerSend()" id="send-btn" class="bg-[#00a884] text-white p-2.5 rounded-full shadow-md active:scale-90 transition-transform flex items-center justify-center min-w-[40px] h-[40px]">
+                <div id="send-icon">
+                    <svg width="20" height="20" fill="currentColor" viewBox="0 0 16 16"><path d="M15.854.146a.5.5 0 0 1 .11.54l-5.819 14.547a.75.75 0 0 1-1.329.124l-3.178-4.995L.643 7.184a.75.75 0 0 1 .124-1.33L15.314.037a.5.5 0 0 1 .54.11ZM6.636 10.07l2.761 4.338L14.13 2.576 6.636 10.07Zm6.787-8.201L1.591 6.602l4.339 2.76 7.494-7.493Z"/></svg>
+                </div>
+                <div id="send-loading" class="spinner-small hidden"></div>
+            </button>
+        </div>
+    </div>
+</div>

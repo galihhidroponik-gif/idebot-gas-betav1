@@ -42,8 +42,14 @@
 // =========================================================================
 // VARIABEL SISTEM (JANGAN DIUBAH)
 // =========================================================================
-var CLIENT_SHEET_ID = SpreadsheetApp.getActiveSpreadsheet().getId();
-var CLIENT_SHEET_URL = SpreadsheetApp.getActiveSpreadsheet().getUrl();
+var CLIENT_SHEET_ID = "";
+var CLIENT_SHEET_URL = "";
+try {
+  CLIENT_SHEET_ID = SpreadsheetApp.getActiveSpreadsheet().getId();
+  CLIENT_SHEET_URL = SpreadsheetApp.getActiveSpreadsheet().getUrl();
+} catch (e) {
+  Logger.log("Warning: Cannot get active spreadsheet URL directly: " + e.message);
+}
 
 // =========================================================
 // [STEP 3] FUNGSI PANCINGAN OTORISASI (Jalankan Manual)
@@ -94,11 +100,32 @@ function doPost(e) {
   return OmniBot.doPostLibrary(e, CLIENT_SHEET_ID);
 }
 
-// Web App UI Router (Menampilkan HTML)
+// Web App UI Router (Menampilkan HTML Native Client dengan fallback ke Library)
 function doGet(e) {
-  if (typeof OmniBot === 'undefined') return HtmlService.createHtmlOutput("<h2>❌ ERROR: LIBRARY BELUM TERPASANG</h2><p>Silakan hubungi Admin Idekreatifa di WA 089509063690.</p>");
-  var clientGasUrl = ScriptApp.getService().getUrl();
-  return OmniBot.doGetLibrary(e, CLIENT_SHEET_URL, clientGasUrl);
+  try {
+    var template = HtmlService.createTemplateFromFile('omniui');
+    template.SHEET_URL = CLIENT_SHEET_URL;
+    template.GAS_URL = ScriptApp.getService().getUrl();
+    // WAJIB: Suntikkan fungsi include langsung ke objek template
+    template.include = function(filename) {
+      return HtmlService.createHtmlOutputFromFile(filename).getContent();
+    };
+    return template.evaluate()
+        .setTitle('Omnichannel Chat Viewer')
+        .addMetaTag('viewport', 'width=device-width, initial-scale=1, maximum-scale=1.0, user-scalable=no')
+        .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  } catch (err) {
+    if (typeof OmniBot !== 'undefined') {
+      var clientGasUrl = ScriptApp.getService().getUrl();
+      return OmniBot.doGetLibrary(e, CLIENT_SHEET_URL, clientGasUrl);
+    }
+    return HtmlService.createHtmlOutput("<h2>❌ ERROR: FILE OMNIUI TIDAK DITEMUKAN</h2><p>Silakan pastikan file omniui.html dan partials sudah ada di proyek script klien.</p>");
+  }
+}
+
+// Helper untuk menyisipkan file HTML Partial
+function include(filename) {
+  return HtmlService.createHtmlOutputFromFile(filename).getContent();
 }
 
 // Trigger Pengiriman Pesan Otomatis
@@ -227,13 +254,13 @@ function checkAndCreateFinanceSheet_(sheetUrl) {
 }
 
 // JEMBATAN ROUTER UI FINANCE DENGAN AUTO-HEALING KLIEN
-function getFinanceDataMaster(sheetUrl) { 
+function getFinanceDataMaster(sheetUrl, userAccountsStr) { 
   if (typeof OmniBot === 'undefined') return [];
   
   // Lakukan pengecekan dan pembuatan sheet otomatis di sisi klien sebelum ditarik master
   checkAndCreateFinanceSheet_(sheetUrl);
   
-  return OmniBot.getFinanceDataMaster(sheetUrl); 
+  return OmniBot.getFinanceDataMaster(sheetUrl, userAccountsStr); 
 }
 
 function updateFinanceRowStatus(sheetUrl, rowIndex, newStatus) { 
@@ -296,6 +323,32 @@ function deleteContactData(sheetUrl, contactId) {
   }
 }
 
+function checkContactExistsNative(sheetUrl, contactId) {
+  try {
+    var ss = SpreadsheetApp.openByUrl(sheetUrl);
+    var sheet = ss.getSheetByName("Networking");
+    if (!sheet) return { status: "error", message: "Sheet tidak ditemukan" };
+    
+    var data = sheet.getDataRange().getValues();
+    var tz = Session.getScriptTimeZone();
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][1]).trim() === String(contactId).trim()) {
+        // Konversi Date object ke string agar aman diserialisasi oleh google.script.run
+        var safeRow = data[i].map(function(cell) {
+          if (cell instanceof Date) {
+            return Utilities.formatDate(cell, tz, "yyyy-MM-dd HH:mm:ss");
+          }
+          return cell;
+        });
+        return { status: "exists", row: i + 1, data: safeRow };
+      }
+    }
+    return { status: "not_found" };
+  } catch (e) {
+    return { status: "error", message: e.message };
+  }
+}
+
 function verifyLoginNative(sheetInput, user, pass) { 
   return OmniBot.verifyLogin(sheetInput, user, pass); 
 }
@@ -324,3 +377,85 @@ function deleteBankContentNative(sheetInput, index) {
   if (typeof OmniBot === 'undefined') return "error: Library Missing";
   return OmniBot.deleteBankContentNative(sheetInput, index);
 }
+
+// =========================================================================
+// JEMBATAN OMNI UI: UPDATE JADWAL FU OTOMATIS
+// =========================================================================
+function updateNextSendFuAutomatedNative(sheetInput, uniqueId) {
+  // Ganti 'OmniBot' dengan nama Identifier Library Anda jika berbeda
+  if (typeof OmniBot === 'undefined') return { status: "error", message: "Library tidak terhubung" };
+  
+  return OmniBot.updateNextSendFuAutomatedNative(sheetInput, uniqueId);
+}
+
+// =========================================================================
+// [BLOK KODE BARU] JEMBATAN OMNI UI: AREA & TICKET
+// =========================================================================
+function getAreaTicketDataNative(sheetInput, userAccountsStr) {
+  if (typeof OmniBot === 'undefined') return { status: "error", message: "Library Missing" };
+  // Panggil Master
+  return OmniBot.getAreaTicketDataMaster(sheetInput, userAccountsStr);
+}
+
+function updateAreaTicketNative(sheetInput, sheetName, searchId, startCol, dataArraySatuBaris) {
+  if (typeof OmniBot === 'undefined') return "error: Library Missing";
+  // Panggil Master
+  return OmniBot.updateAreaTicketMaster(sheetInput, sheetName, searchId, startCol, dataArraySatuBaris);
+}
+
+function deleteAreaTicketNative(sheetInput, sheetName, rowId) {
+  if (typeof OmniBot === 'undefined') return "error: Library Missing";
+  return OmniBot.deleteAreaTicketNative(sheetInput, sheetName, rowId);
+}
+
+// FUNGSI TAMBAH DATA KE KOLOM T NETWORKING
+function appendDataToNetworkingT(sheetInput, contactId, userContent) {
+  try {
+    var ss = SpreadsheetApp.openByUrl(sheetInput);
+    var sheet = ss.getSheetByName("Networking");
+    if (!sheet) return "Error: Sheet Networking tidak ditemukan";
+
+    var data = sheet.getDataRange().getValues();
+    // Cari baris berdasarkan ID Networking (Kolom B / Indeks 1)
+    for (var i = 1; i < data.length; i++) {
+      if (String(data[i][1]).trim() === String(contactId).trim()) {
+        var row = i + 1;
+        var cellT = sheet.getRange(row, 20); // Kolom T
+        var currentVal = cellT.getValue();
+        
+        // MODIFIKASI: POLA PENULISAN
+        // Menangani pola penambahan _ dan pemisah baris tanpa merusak format di dalam [ ]
+        // Cari posisi awal dari setiap timestamp yang diawali dengan "[",
+        // lalu tambahkan "_" di depannya.
+        // Kemudian cari tanda ":" yang berada DILUAR kurung [ ]
+        
+        // 1. Tambahkan _ sebelum [ (dengan baris baru)
+        var formattedContent = userContent.replace(/\[/g, "_\n[");
+        
+        // 2. Tambahkan baris baru setelah ":" HANYA JIKA tidak berada di dalam [ ]
+        // Kita split per baris atau gunakan regex yang lebih cerdas untuk mengecualikan timestamp
+        // Pola timestamp: [DD/MM, HH:MM]
+        
+        // Split berdasarkan bagian yang di dalam kurung siku
+        var parts = formattedContent.split(/(\[.*?\])/g);
+        for (var j = 0; j < parts.length; j++) {
+          // Jika bagian ini bukan kurung (berarti teks biasa), baru kita replace colon-nya
+          if (!parts[j].match(/^\[.*\]$/)) {
+             parts[j] = parts[j].replace(/:/g, ":\n");
+          }
+        }
+        formattedContent = parts.join('');
+
+        
+        var newVal = (currentVal ? currentVal + "\n\n" : "") + formattedContent;
+        cellT.setValue(newVal);
+        
+        return "success";
+      }
+    }
+    return "Error: ID tidak ditemukan";
+  } catch (e) {
+    return "Error: " + e.message;
+  }
+}
+
